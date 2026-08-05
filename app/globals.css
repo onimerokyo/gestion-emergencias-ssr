@@ -1010,6 +1010,13 @@ textarea:focus {
   font-size: 9px;
 }
 
+.incident-impact em {
+  margin-top: 3px;
+  color: #718a9a;
+  font-size: 7px;
+  font-style: normal;
+}
+
 .incident-time em {
   margin-top: 3px;
   color: #8294a1;
@@ -1210,11 +1217,74 @@ textarea:focus {
 
 .filters-panel {
   display: grid;
-  grid-template-columns: minmax(250px, 1fr) 180px 180px;
+  grid-template-columns: minmax(250px, 1fr) 180px;
   gap: 14px;
   margin: 26px 0 16px;
   padding: 14px;
   align-items: end;
+}
+
+.incident-stage-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin: 0 0 16px;
+}
+
+.incident-stage-tabs > button {
+  display: grid;
+  min-height: 86px;
+  padding: 13px 15px;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: #fff;
+  color: var(--ink);
+  text-align: left;
+  box-shadow: 0 7px 20px rgba(20, 54, 75, 0.03);
+}
+
+.incident-stage-tabs > button > span {
+  display: inline-flex;
+  width: 39px;
+  height: 39px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 11px;
+  background: #edf4f7;
+  color: #315b72;
+  font-size: 16px;
+  font-weight: 850;
+}
+
+.incident-stage-tabs > button > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.incident-stage-tabs strong {
+  font-size: 11px;
+}
+
+.incident-stage-tabs small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.35;
+}
+
+.incident-stage-tabs > button.active {
+  border-color: #7cbada;
+  background: #f2f9fd;
+  box-shadow: 0 0 0 2px rgba(0, 126, 188, 0.08);
+}
+
+.incident-stage-tabs > button.active > span {
+  background: var(--blue);
+  color: #fff;
 }
 
 .search-box {
@@ -2000,6 +2070,48 @@ textarea:focus {
   margin-top: 14px;
 }
 
+.report-comparison {
+  display: grid;
+  min-height: 78px;
+  margin-top: 14px;
+  padding: 12px 15px;
+  grid-template-columns: minmax(220px, 1fr) repeat(3, minmax(110px, 0.42fr));
+  gap: 10px;
+  align-items: stretch;
+  border: 1px solid #cfe0e8;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #f8fcfd, #eef7fa);
+}
+
+.report-comparison > div,
+.report-comparison article {
+  display: flex;
+  padding: 8px 12px;
+  justify-content: center;
+  flex-direction: column;
+}
+
+.report-comparison > div > strong {
+  margin-top: 4px;
+  color: #284e64;
+  font-size: 10px;
+}
+
+.report-comparison article {
+  border-left: 1px solid #d7e6ed;
+}
+
+.report-comparison article small {
+  color: #718796;
+  font-size: 8px;
+}
+
+.report-comparison article strong {
+  margin-top: 5px;
+  color: #0a6fa6;
+  font-size: 17px;
+}
+
 .report-kpis article {
   display: grid;
   min-height: 108px;
@@ -2101,6 +2213,27 @@ textarea:focus {
   color: var(--muted);
   font-size: 9px;
   line-height: 1.55;
+}
+
+.report-narratives {
+  display: grid;
+  gap: 11px;
+  padding: 15px 19px 3px;
+}
+
+.report-narratives label {
+  color: #4e6879;
+  font-size: 8px;
+  font-weight: 720;
+}
+
+.report-narratives textarea {
+  min-height: 82px;
+  margin-top: 6px;
+  padding: 10px;
+  resize: vertical;
+  font-size: 9px;
+  line-height: 1.45;
 }
 
 .report-checklist {
@@ -2310,9 +2443,30 @@ textarea:focus {
 
 .official-summary-strip {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   border-top: 1px solid #e1eaf0;
   border-bottom: 1px solid #e1eaf0;
+}
+
+.official-report-narrative {
+  margin: 17px 22px 0;
+  padding: 13px 15px;
+  border-left: 3px solid var(--blue);
+  border-radius: 0 9px 9px 0;
+  background: #f5fafd;
+}
+
+.official-report-narrative.observations {
+  border-left-color: var(--amber);
+  background: #fffbf2;
+}
+
+.official-report-narrative p {
+  margin: 7px 0 0;
+  color: #506a7a;
+  font-size: 8px;
+  line-height: 1.55;
+  white-space: pre-wrap;
 }
 
 .official-summary-strip > div {
@@ -4011,6 +4165,45 @@ textarea:focus {
   font-size: 10px;
 }
 
+.incident-extra-data {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+  margin-top: 12px;
+}
+
+.incident-extra-data p,
+.incident-extra-data a {
+  display: flex;
+  min-height: 54px;
+  margin: 0;
+  padding: 10px 12px;
+  justify-content: center;
+  flex-direction: column;
+  border: 1px solid #e1e9ee;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.incident-extra-data small {
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.incident-extra-data strong {
+  margin-top: 5px;
+  color: #294b60;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.incident-extra-data a {
+  color: var(--blue);
+  font-size: 9px;
+  font-weight: 750;
+  text-decoration: none;
+}
+
 .timeline-section {
   margin-top: 24px;
 }
@@ -4070,6 +4263,51 @@ textarea:focus {
 
 .timeline .timeline-resolved strong {
   color: #126b55;
+}
+
+.timeline-photo-event > div {
+  min-width: 0;
+}
+
+.trace-photo-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 0 16px;
+}
+
+.trace-photo-grid a {
+  display: flex;
+  overflow: hidden;
+  min-width: 0;
+  border: 1px solid #d8e5eb;
+  border-radius: 9px;
+  background: #f7fafb;
+  flex-direction: column;
+  color: #607887;
+  text-decoration: none;
+}
+
+.trace-photo-grid img {
+  width: 100%;
+  height: 96px;
+  object-fit: cover;
+}
+
+.trace-photo-grid a > span {
+  overflow: hidden;
+  padding: 7px;
+  font-size: 6.5px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+}
+
+.people-estimate {
+  display: block;
+  margin-top: 6px;
+  color: #39708b;
+  font-size: 8px;
+  line-height: 1.4;
 }
 
 .followup-composer {
@@ -4310,6 +4548,45 @@ textarea:focus {
     grid-column: 1 / -1;
   }
 
+  .user-row {
+    grid-template-columns: auto minmax(165px, 1fr) minmax(135px, 0.72fr) auto;
+    grid-template-areas:
+      "avatar identity role state"
+      "avatar access actions actions";
+    row-gap: 10px;
+  }
+
+  .user-row > .avatar {
+    grid-area: avatar;
+  }
+
+  .user-identity {
+    grid-area: identity;
+  }
+
+  .user-role-field {
+    grid-area: role;
+  }
+
+  .user-access {
+    grid-area: access;
+  }
+
+  .user-account-state {
+    grid-area: state;
+  }
+
+  .user-actions {
+    display: flex;
+    grid-area: actions;
+    justify-content: flex-end;
+  }
+
+  .user-actions button {
+    min-width: 102px;
+    white-space: nowrap;
+  }
+
   .resolved-history-list > button {
     grid-template-columns: auto minmax(180px, 1fr) minmax(110px, 0.7fr) minmax(180px, 1fr) auto;
   }
@@ -4463,6 +4740,10 @@ textarea:focus {
     grid-template-columns: 1fr 1fr;
   }
 
+  .report-comparison {
+    grid-template-columns: 1fr repeat(3, minmax(90px, 0.42fr));
+  }
+
   .reports-workspace {
     grid-template-columns: 1fr;
     overflow: visible;
@@ -4474,6 +4755,12 @@ textarea:focus {
 
   .user-row {
     grid-template-columns: auto 1fr auto;
+    grid-template-areas: "avatar identity actions";
+  }
+
+  .user-actions {
+    display: grid;
+    grid-template-columns: 1.25fr 0.8fr;
   }
 
   .user-row .role-badge,
@@ -4577,6 +4864,14 @@ textarea:focus {
     gap: 10px;
   }
 
+  .user-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .user-actions button {
+    min-width: 86px;
+  }
+
   .user-row .user-toggle {
     min-width: 58px;
     padding: 0 6px;
@@ -4671,6 +4966,16 @@ textarea:focus {
     gap: 9px;
     min-height: 82px;
     padding: 12px 13px;
+  }
+
+  .incident-stage-tabs {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .incident-stage-tabs > button {
+    min-height: 68px;
+    padding: 10px 12px;
   }
 
   .incident-impact,
@@ -4785,6 +5090,17 @@ textarea:focus {
     margin-top: 10px;
   }
 
+  .report-comparison {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  .report-comparison article {
+    min-height: 56px;
+    border-top: 1px solid #d7e6ed;
+    border-left: 0;
+  }
+
   .report-kpis article {
     min-height: 102px;
     padding: 12px;
@@ -4855,6 +5171,19 @@ textarea:focus {
     padding: 11px;
   }
 
+  .official-summary-strip {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .official-summary-strip > div:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .official-report-narrative {
+    margin-right: 13px;
+    margin-left: 13px;
+  }
+
   .official-report-section {
     padding: 17px 13px 0;
   }
@@ -4874,6 +5203,14 @@ textarea:focus {
 
   .report-observations > p {
     margin-left: 0;
+  }
+
+  .incident-extra-data {
+    grid-template-columns: 1fr;
+  }
+
+  .trace-photo-grid {
+    grid-template-columns: 1fr 1fr;
   }
 
   .official-report-footer {
