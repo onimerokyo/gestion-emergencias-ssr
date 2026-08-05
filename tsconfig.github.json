@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["vite/client"],
+    "noEmit": true
+  },
+  "include": [
+    "app/araucania-systems.ts",
+    "app/client-api.ts",
+    "app/emergency-app.tsx",
+    "src/**/*.ts",
+    "src/**/*.tsx"
+  ],
+  "exclude": [
+    "app/api/**",
+    "app/lib/**",
+    "db/**",
+    "worker/**",
+    "examples/**"
+  ]
+}
