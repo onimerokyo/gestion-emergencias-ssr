@@ -1,6 +1,13 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  ChangeEvent,
+  FormEvent,
+  KeyboardEvent,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   regionalSystems,
   type RegionalSystem,
@@ -183,6 +190,7 @@ const NOTIFICATION_QUEUE_KEY = "ssr-notification-queue";
 const NOTIFICATION_QUEUE_EVENT = "ssr-notification-queue-updated";
 const CHILE_TIME_ZONE = "America/Santiago";
 const INTERNAL_REFERENCE_TIMES = ["09:00", "12:00", "15:00", "19:00"];
+const APP_VERSION = "1.2";
 
 function chileDateTimeParts(value = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -372,6 +380,20 @@ const navItems: { id: View; label: string; short: string; icon: string }[] = [
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat("es-CL").format(value);
+}
+
+function normalizeSearchText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("es")
+    .trim();
+}
+
+function systemSearchText(system: SystemSSR) {
+  return normalizeSearchText(
+    `${system.name} ${system.commune} ${system.province} ${system.code}`,
+  );
 }
 
 function priorityClass(priority: Priority) {
@@ -1382,7 +1404,7 @@ export default function EmergencyApp() {
             </div>
             <span className="access-chip">
               <i />
-              Acceso interno DOH
+              Acceso interno DOH · v{APP_VERSION}
             </span>
             <h2>Acceso funcionarios DOH</h2>
             <p className="muted">
@@ -1440,7 +1462,7 @@ export default function EmergencyApp() {
         <div className="product-name">
           <span>Gestión de</span>
           <strong>Emergencias SSR</strong>
-          <small>Región de La Araucanía</small>
+          <small>La Araucanía · Versión {APP_VERSION}</small>
         </div>
         <nav aria-label="Navegación principal">
           {navItems
@@ -1573,6 +1595,7 @@ export default function EmergencyApp() {
         <ReportWizard
           step={wizardStep}
           draft={draft}
+          incidents={incidents}
           photos={photos}
           updateDraft={updateDraft}
           handlePhotos={handlePhotos}
@@ -2347,7 +2370,7 @@ function SystemsView({
         .map((system) => system.commune),
     ),
   ].sort((a, b) => a.localeCompare(b, "es"));
-  const normalizedSearch = systemSearch.trim().toLocaleLowerCase("es");
+  const normalizedSearch = normalizeSearchText(systemSearch);
   const filteredSystems = systems.filter((system) => {
     const systemIncidents = activeBySystem.get(system.code) ?? [];
     const critical = systemIncidents.some(
@@ -2360,9 +2383,7 @@ function SystemsView({
         : "Sin incidentes";
     const matchesText =
       !normalizedSearch ||
-      system.name.toLocaleLowerCase("es").includes(normalizedSearch) ||
-      system.code.toLocaleLowerCase("es").includes(normalizedSearch) ||
-      system.commune.toLocaleLowerCase("es").includes(normalizedSearch);
+      systemSearchText(system).includes(normalizedSearch);
     return (
       matchesText &&
       (provinceFilter === "Todas" || system.province === provinceFilter) &&
@@ -3857,6 +3878,7 @@ function UsersView({ currentUser }: { currentUser: AuthenticatedUser }) {
             Herramienta para el registro, seguimiento, resolución e informes de
             fallas en Sistemas Sanitarios Rurales.
           </p>
+          <span className="version-badge">Versión {APP_VERSION} · Operativa</span>
         </div>
         <AppCredit />
       </section>
@@ -3867,6 +3889,7 @@ function UsersView({ currentUser }: { currentUser: AuthenticatedUser }) {
 function ReportWizard({
   step,
   draft,
+  incidents,
   photos,
   updateDraft,
   handlePhotos,
@@ -3879,6 +3902,7 @@ function ReportWizard({
 }: {
   step: number;
   draft: Draft;
+  incidents: Incident[];
   photos: IncidentPhotoDraft[];
   updateDraft: <K extends keyof Draft>(key: K, value: Draft[K]) => void;
   handlePhotos: (event: ChangeEvent<HTMLInputElement>) => void;
@@ -3892,12 +3916,78 @@ function ReportWizard({
   const selectedSystem = systems.find(
     (system) => system.code === draft.systemCode,
   );
+  const [systemQuery, setSystemQuery] = useState(
+    () => selectedSystem?.name ?? "",
+  );
+  const [systemSearchOpen, setSystemSearchOpen] = useState(false);
+  const [activeSystemResult, setActiveSystemResult] = useState(0);
+  const normalizedSystemQuery = normalizeSearchText(systemQuery);
+  const matchingSystems = useMemo(() => {
+    if (!normalizedSystemQuery) return systems.slice(0, 8);
+    return systems
+      .filter((system) => systemSearchText(system).includes(normalizedSystemQuery))
+      .sort((left, right) => {
+        const leftName = normalizeSearchText(left.name);
+        const rightName = normalizeSearchText(right.name);
+        const leftStarts = leftName.startsWith(normalizedSystemQuery) ? 0 : 1;
+        const rightStarts = rightName.startsWith(normalizedSystemQuery) ? 0 : 1;
+        return leftStarts - rightStarts || left.name.localeCompare(right.name, "es");
+      })
+      .slice(0, 8);
+  }, [normalizedSystemQuery]);
+  const selectedSystemIncidents = useMemo(
+    () =>
+      incidents.filter(
+        (incident) =>
+          incident.systemCode === draft.systemCode &&
+          !isResolvedIncident(incident),
+      ),
+    [draft.systemCode, incidents],
+  );
+
+  function chooseSystem(system: SystemSSR) {
+    updateDraft("systemCode", system.code);
+    setSystemQuery(system.name);
+    setSystemSearchOpen(false);
+    setActiveSystemResult(0);
+  }
+
+  function clearSystem() {
+    updateDraft("systemCode", "");
+    setSystemQuery("");
+    setSystemSearchOpen(true);
+    setActiveSystemResult(0);
+  }
+
+  function handleSystemSearchKeyDown(
+    event: KeyboardEvent<HTMLInputElement>,
+  ) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setSystemSearchOpen(true);
+      setActiveSystemResult((current) =>
+        Math.min(current + 1, Math.max(0, matchingSystems.length - 1)),
+      );
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveSystemResult((current) => Math.max(0, current - 1));
+    } else if (event.key === "Enter" && systemSearchOpen) {
+      const result = matchingSystems[activeSystemResult];
+      if (result) {
+        event.preventDefault();
+        chooseSystem(result);
+      }
+    } else if (event.key === "Escape") {
+      setSystemSearchOpen(false);
+    }
+  }
+
   return (
     <div className="modal-backdrop" role="presentation">
       <section className="wizard" role="dialog" aria-modal="true">
         <header className="wizard-header">
           <div>
-            <span className="eyebrow">Nuevo reporte</span>
+            <span className="eyebrow">Nuevo reporte · Versión {APP_VERSION}</span>
             <h2>
               {step === 1
                 ? "Identificación"
@@ -3932,22 +4022,144 @@ function ReportWizard({
         <div className="wizard-body">
           {step === 1 && (
             <div className="form-grid">
-              <label className="wide">
-                Sistema SSR <b>*</b>
-                <select
-                  value={draft.systemCode}
-                  onChange={(event) =>
-                    updateDraft("systemCode", event.target.value)
-                  }
+              <div className="form-field wide system-search-field">
+                <label className="field-label" htmlFor="system-search">
+                  Sistema SSR <b>*</b>
+                </label>
+                <div
+                  className="system-combobox"
+                  onBlur={(event) => {
+                    const nextTarget = event.relatedTarget as Node | null;
+                    if (!nextTarget || !event.currentTarget.contains(nextTarget)) {
+                      setSystemSearchOpen(false);
+                    }
+                  }}
                 >
-                  <option value="">Selecciona un sistema</option>
-                  {systems.map((system) => (
-                    <option key={system.code} value={system.code}>
-                      {system.commune} · {system.name} · {system.code}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  <div className="system-search-control">
+                    <span aria-hidden>⌕</span>
+                    <input
+                      id="system-search"
+                      role="combobox"
+                      aria-autocomplete="list"
+                      aria-expanded={systemSearchOpen}
+                      aria-controls="system-search-results"
+                      aria-activedescendant={
+                        systemSearchOpen && matchingSystems[activeSystemResult]
+                          ? `system-result-${matchingSystems[activeSystemResult].code}`
+                          : undefined
+                      }
+                      autoComplete="off"
+                      value={systemQuery}
+                      onFocus={() => setSystemSearchOpen(true)}
+                      onChange={(event) => {
+                        setSystemQuery(event.target.value);
+                        if (draft.systemCode) updateDraft("systemCode", "");
+                        setSystemSearchOpen(true);
+                        setActiveSystemResult(0);
+                      }}
+                      onKeyDown={handleSystemSearchKeyDown}
+                      placeholder="Escribe el nombre, comuna o código SSR"
+                    />
+                    {systemQuery && (
+                      <button
+                        className="system-search-clear"
+                        type="button"
+                        onClick={clearSystem}
+                        aria-label="Limpiar sistema seleccionado"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                  {systemSearchOpen && (
+                    <div
+                      className="system-search-results"
+                      id="system-search-results"
+                      role="listbox"
+                      aria-label="Sistemas SSR encontrados"
+                    >
+                      {matchingSystems.map((system, index) => {
+                        const activeCount = incidents.filter(
+                          (incident) =>
+                            incident.systemCode === system.code &&
+                            !isResolvedIncident(incident),
+                        ).length;
+                        return (
+                          <button
+                            id={`system-result-${system.code}`}
+                            className={
+                              index === activeSystemResult ? "active" : ""
+                            }
+                            type="button"
+                            role="option"
+                            aria-selected={index === activeSystemResult}
+                            key={system.code}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onMouseEnter={() => setActiveSystemResult(index)}
+                            onClick={() => chooseSystem(system)}
+                          >
+                            <span>
+                              <strong>{system.name}</strong>
+                              <small>
+                                {system.commune} · {system.province} · {system.code}
+                              </small>
+                            </span>
+                            <span
+                              className={
+                                activeCount ? "with-incidents" : "clear"
+                              }
+                            >
+                              {activeCount
+                                ? `${activeCount} activo${activeCount === 1 ? "" : "s"}`
+                                : "Sin incidentes"}
+                            </span>
+                          </button>
+                        );
+                      })}
+                      {!matchingSystems.length && (
+                        <div className="system-search-empty">
+                          <strong>No encontramos coincidencias</strong>
+                          <small>
+                            Prueba con otra parte del nombre, comuna o código.
+                          </small>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                {selectedSystem && (
+                  <div className="selected-system-card">
+                    <span className="selected-system-check">✓</span>
+                    <span>
+                      <strong>{selectedSystem.name}</strong>
+                      <small>
+                        {selectedSystem.commune} · {selectedSystem.province} ·{" "}
+                        {selectedSystem.code}
+                      </small>
+                    </span>
+                    <button type="button" onClick={clearSystem}>
+                      Cambiar
+                    </button>
+                  </div>
+                )}
+                {!!selectedSystemIncidents.length && (
+                  <div className="active-incident-warning" role="status">
+                    <span>!</span>
+                    <p>
+                      <strong>
+                        Este sistema ya tiene {selectedSystemIncidents.length}{" "}
+                        incidente
+                        {selectedSystemIncidents.length === 1
+                          ? " activo"
+                          : "s activos"}
+                        .
+                      </strong>
+                      Verifica que el nuevo reporte corresponda a una falla
+                      diferente para evitar duplicados.
+                    </p>
+                  </div>
+                )}
+              </div>
               <label>
                 Fecha y hora de ocurrencia
                 <input
