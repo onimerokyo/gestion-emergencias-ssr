@@ -16,7 +16,7 @@ import { apiFetch, assetUrl } from "./client-api";
 
 type Role = "admin" | "reporter" | "viewer";
 type View = "home" | "incidents" | "systems" | "reports" | "users";
-type IncidentViewFilter = "Activos" | "Resueltos";
+type IncidentViewFilter = "Iniciados" | "En gestión" | "Resueltos";
 type Priority = "Baja" | "Media" | "Alta" | "Crítica";
 type IncidentStatus =
   | "Reportado"
@@ -34,6 +34,17 @@ type IncidentFollowUp = {
   author: string;
   createdAt: string;
   status: IncidentStatus;
+  eventType?: string;
+};
+
+type IncidentAttachment = {
+  id: string;
+  url: string;
+  fileName: string;
+  mimeType: string;
+  fileSize: number;
+  uploadedBy: string;
+  createdAt: string;
 };
 
 type Incident = {
@@ -55,6 +66,12 @@ type Incident = {
   createdAt: string;
   responsible: string;
   resolvedAt?: string;
+  sectors?: string;
+  support?: string;
+  notes?: string;
+  latitude?: number;
+  longitude?: number;
+  attachments?: IncidentAttachment[];
   followUps?: IncidentFollowUp[];
 };
 
@@ -71,6 +88,8 @@ type ReportSnapshot = {
   generatedAt: string;
   generatedBy: string;
   incidents: Incident[];
+  executiveSummary?: string;
+  observations?: string;
 };
 
 type SystemComment = {
@@ -190,7 +209,8 @@ const NOTIFICATION_QUEUE_KEY = "ssr-notification-queue";
 const NOTIFICATION_QUEUE_EVENT = "ssr-notification-queue-updated";
 const CHILE_TIME_ZONE = "America/Santiago";
 const INTERNAL_REFERENCE_TIMES = ["09:00", "12:00", "15:00", "19:00"];
-const APP_VERSION = "1.2";
+const PEOPLE_PER_CONNECTION = 4;
+const APP_VERSION = "1.3";
 
 function chileDateTimeParts(value = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -312,20 +332,43 @@ async function sendEmailNotification(
   return updated;
 }
 
-const categories = [
-  "Interrupción del suministro de agua",
-  "Falla eléctrica externa",
-  "Falla eléctrica interna",
-  "Falla de bomba",
-  "Falla de generador",
-  "Falla de tablero o automatización",
-  "Rotura de matriz o impulsión",
-  "Problema de captación",
-  "Problema de estanque",
-  "Calidad del agua",
-  "Combustible",
-  "Infraestructura",
-  "Otro",
+const categoryGroups = [
+  {
+    label: "Operación e infraestructura",
+    options: [
+      "Interrupción del suministro de agua",
+      "Falla eléctrica externa",
+      "Falla eléctrica interna",
+      "Falla de bomba",
+      "Falla de generador",
+      "Falla de tablero o automatización",
+      "Rotura de matriz o impulsión",
+      "Problema de captación",
+      "Problema de estanque",
+      "Calidad del agua",
+      "Combustible",
+      "Infraestructura",
+    ],
+  },
+  {
+    label: "Crisis financiera",
+    options: [
+      "Crisis financiera · quiebra o insolvencia",
+      "Crisis financiera · deudas morosas",
+      "Crisis financiera · corte por deuda",
+      "Crisis financiera · otra situación",
+    ],
+  },
+  {
+    label: "Crisis comunitaria",
+    options: [
+      "Crisis comunitaria · protesta o movilización",
+      "Crisis comunitaria · toma u ocupación",
+      "Crisis comunitaria · conflicto interno",
+      "Crisis comunitaria · otra situación",
+    ],
+  },
+  { label: "Otros", options: ["Otro"] },
 ];
 
 const roleData: Record<
@@ -339,10 +382,10 @@ const roleData: Record<
     email: "marcelo.ulloa@mop.gov.cl",
   },
   reporter: {
-    name: "Carmen Gloria",
+    name: "Usuario Reportante",
     label: "Reportante DOH",
-    initials: "CG",
-    email: "carmen.gloria@mop.gov.cl",
+    initials: "UR",
+    email: "reportante.ssr@mop.gov.cl",
   },
   viewer: {
     name: "Usuario Consulta",
@@ -380,6 +423,18 @@ const navItems: { id: View; label: string; short: string; icon: string }[] = [
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat("es-CL").format(value);
+}
+
+function estimatedPeople(connections: number) {
+  return Math.max(0, connections || 0) * PEOPLE_PER_CONNECTION;
+}
+
+function incidentOperationalStage(incident: Incident): IncidentViewFilter {
+  if (isResolvedIncident(incident)) return "Resueltos";
+  if (incident.status === "Reportado" || incident.status === "En revisión") {
+    return "Iniciados";
+  }
+  return "En gestión";
 }
 
 function normalizeSearchText(value: string) {
@@ -461,7 +516,7 @@ export default function EmergencyApp() {
   const [search, setSearch] = useState("");
   const [priorityFilter, setPriorityFilter] = useState("Todas");
   const [incidentStatusFilter, setIncidentStatusFilter] =
-    useState<IncidentViewFilter>("Activos");
+    useState<IncidentViewFilter>("Iniciados");
   const [online, setOnline] = useState(
     () => (typeof navigator === "undefined" ? true : navigator.onLine),
   );
@@ -614,6 +669,19 @@ export default function EmergencyApp() {
     (incident) =>
       isResolvedIncident(incident) && isWithinResolvedHistory(incident),
   );
+  const incidentStageCounts: Record<IncidentViewFilter, number> = {
+    Iniciados: incidents.filter(
+      (incident) => incidentOperationalStage(incident) === "Iniciados",
+    ).length,
+    "En gestión": incidents.filter(
+      (incident) => incidentOperationalStage(incident) === "En gestión",
+    ).length,
+    Resueltos: incidents.filter(
+      (incident) =>
+        incidentOperationalStage(incident) === "Resueltos" &&
+        isWithinOperationalResolution(incident),
+    ).length,
+  };
   const filteredIncidents = (() => {
     const normalized = search.trim().toLowerCase();
     return incidents.filter((incident) => {
@@ -625,10 +693,9 @@ export default function EmergencyApp() {
       const matchesPriority =
         priorityFilter === "Todas" || incident.priority === priorityFilter;
       const matchesStatus =
-        incidentStatusFilter === "Activos"
-          ? !isResolvedIncident(incident)
-          : isResolvedIncident(incident) &&
-            isWithinOperationalResolution(incident);
+        incidentOperationalStage(incident) === incidentStatusFilter &&
+        (incidentStatusFilter !== "Resueltos" ||
+          isWithinOperationalResolution(incident));
       return matchesText && matchesPriority && matchesStatus;
     });
   })();
@@ -793,7 +860,7 @@ export default function EmergencyApp() {
       });
       const result = (await response.json()) as { incident?: Incident; error?: string };
       if (!response.ok || !result.incident) throw new Error(result.error || "No fue posible registrar la falla.");
-      const incident = result.incident;
+      let incident = result.incident;
       if (photos.length) {
         const photoData = new FormData();
         photoData.set("incidentId", incident.id);
@@ -802,6 +869,16 @@ export default function EmergencyApp() {
         if (!photoResponse.ok) {
           const photoResult = (await photoResponse.json()) as { error?: string };
           setToast(`La falla quedó registrada, pero las fotografías no se guardaron: ${photoResult.error ?? "error de carga"}`);
+        } else {
+          const refreshedResponse = await apiFetch("/api/incidents", {
+            cache: "no-store",
+          });
+          const refreshed = (await refreshedResponse.json()) as {
+            incidents?: Incident[];
+          };
+          incident =
+            refreshed.incidents?.find((item) => item.id === incident.id) ??
+            incident;
         }
       }
       setIncidents((current) => [incident, ...current]);
@@ -811,7 +888,7 @@ export default function EmergencyApp() {
       setPhotos([]);
       window.localStorage.removeItem("ssr-report-draft");
       setWizardOpen(false);
-      setIncidentStatusFilter("Activos");
+      setIncidentStatusFilter("Iniciados");
       setView("incidents");
       setToast(`Falla ${incident.code} registrada y sincronizada.`);
     } catch (error) {
@@ -948,11 +1025,36 @@ export default function EmergencyApp() {
         half,
         y,
       );
-      field("Responsable actual", incident.responsible, margin + half + gap, half, y);
+      field(
+        "Personas afectadas (estimación)",
+        formatNumber(estimatedPeople(incident.affected)),
+        margin + half + gap,
+        half,
+        y,
+      );
+      y += 23;
+      field("Responsable actual", incident.responsible, margin, half, y);
+      field("Sectores afectados", incident.sectors || "Sin información", margin + half + gap, half, y);
       y += 25;
 
       sectionTitle("Situación informada");
       writeWrapped(incident.description, { size: 9.5 });
+
+      if (incident.support || incident.notes || incident.latitude != null) {
+        sectionTitle("Antecedentes complementarios");
+        writeWrapped(
+          [
+            incident.support ? `Apoyo requerido: ${incident.support}` : "",
+            incident.notes ? `Observaciones técnicas: ${incident.notes}` : "",
+            incident.latitude != null && incident.longitude != null
+              ? `Coordenadas: ${incident.latitude}, ${incident.longitude}`
+              : "",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+          { size: 8.5 },
+        );
+      }
 
       sectionTitle("Trazabilidad");
       const events = [
@@ -1072,6 +1174,12 @@ export default function EmergencyApp() {
         "Agua",
         "Electricidad",
         "Arranques afectados",
+        "Personas afectadas (estimación)",
+        "Sectores afectados",
+        "Apoyo requerido",
+        "Observaciones técnicas",
+        "Latitud",
+        "Longitud",
         "Responsable",
         "Reportado por",
         "Ingresado por",
@@ -1090,6 +1198,12 @@ export default function EmergencyApp() {
           incident.water,
           incident.electricity,
           String(incident.affected),
+          String(estimatedPeople(incident.affected)),
+          incident.sectors ?? "",
+          incident.support ?? "",
+          incident.notes ?? "",
+          incident.latitude == null ? "" : String(incident.latitude),
+          incident.longitude == null ? "" : String(incident.longitude),
           incident.responsible,
           incident.reportedBy,
           incident.enteredBy,
@@ -1127,6 +1241,7 @@ export default function EmergencyApp() {
         "Ingresado por",
         "Fecha de ingreso",
         "Arranques afectados al reportar",
+        "Personas afectadas al reportar (estimación)",
         "Fecha de resolución",
         "Resuelto por",
         "Cómo se resolvió",
@@ -1145,6 +1260,9 @@ export default function EmergencyApp() {
           incident.enteredBy,
           incident.createdAt,
           String(incident.affectedAtReport ?? incident.affected),
+          String(
+            estimatedPeople(incident.affectedAtReport ?? incident.affected),
+          ),
           resolution?.createdAt ??
             (incident.resolvedAt
               ? new Date(incident.resolvedAt).toLocaleString("es-CL", {
@@ -1178,6 +1296,8 @@ export default function EmergencyApp() {
     reportTime: string,
     reportIncidents: Incident[],
     scope: string,
+    executiveSummary: string,
+    observations: string,
   ) {
     const versions = generatedReports.filter(
       (report) =>
@@ -1193,12 +1313,22 @@ export default function EmergencyApp() {
       generatedAt: `${formatChileDateTime()} · horario de Chile`,
       generatedBy: user.name,
       incidents: reportIncidents.map((incident) => ({ ...incident })),
+      executiveSummary: executiveSummary.trim(),
+      observations: observations.trim(),
     };
     try {
       const response = await apiFetch("/api/reports", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: snapshot.id, reportDate, reportTime, scope, incidents: snapshot.incidents }),
+        body: JSON.stringify({
+          id: snapshot.id,
+          reportDate,
+          reportTime,
+          scope,
+          incidents: snapshot.incidents,
+          executiveSummary: snapshot.executiveSummary,
+          observations: snapshot.observations,
+        }),
       });
       const result = (await response.json()) as { report?: ReportSnapshot; error?: string };
       if (!response.ok || !result.report) throw new Error(result.error || "No fue posible respaldar el informe.");
@@ -1217,6 +1347,8 @@ export default function EmergencyApp() {
     reportTime: string,
     scope: string,
     generatedBy: string,
+    executiveSummary: string,
+    observations: string,
   ) {
     try {
       const { jsPDF } = await import("jspdf");
@@ -1260,6 +1392,22 @@ export default function EmergencyApp() {
       document.text(`${new Set(reportIncidents.map((incident) => incident.systemCode)).size} sistemas afectados`, margin + 70, y + 8);
       document.text(`${formatNumber(totalAffected)} arranques afectados`, margin + 145, y + 8);
       y += 18;
+      const narrative = [
+        executiveSummary.trim()
+          ? `Resumen ejecutivo: ${executiveSummary.trim()}`
+          : "",
+        observations.trim() ? `Observaciones: ${observations.trim()}` : "",
+      ].filter(Boolean);
+      if (narrative.length) {
+        document.setTextColor(52, 75, 92);
+        document.setFont("helvetica", "normal");
+        document.setFontSize(7.5);
+        const narrativeLines = document
+          .splitTextToSize(narrative.join("\n"), pageWidth - margin * 2)
+          .slice(0, 8);
+        document.text(narrativeLines, margin, y);
+        y += narrativeLines.length * 4 + 4;
+      }
       drawTableHeader();
       reportIncidents.forEach((incident, rowIndex) => {
         if (y > 184) {
@@ -1544,6 +1692,7 @@ export default function EmergencyApp() {
               setPriorityFilter={setPriorityFilter}
               statusFilter={incidentStatusFilter}
               setStatusFilter={setIncidentStatusFilter}
+              stageCounts={incidentStageCounts}
               openWizard={openWizard}
               openIncident={setSelectedIncident}
             />
@@ -2012,7 +2161,7 @@ function Dashboard({
         <MetricCard
           label="Arranques afectados"
           value={formatNumber(totalAffected)}
-          note="Estimación vigente"
+          note={`≈ ${formatNumber(estimatedPeople(totalAffected))} personas`}
           tone="teal"
           icon="⌁"
         />
@@ -2183,6 +2332,7 @@ function IncidentRow({
       <span className="incident-impact">
         <small>Afectación</small>
         <strong>{formatNumber(incident.affected)} arranques</strong>
+        <em>≈ {formatNumber(estimatedPeople(incident.affected))} personas</em>
       </span>
       <span className={priorityClass(incident.priority)}>
         {incident.priority}
@@ -2206,6 +2356,7 @@ function IncidentsView({
   setPriorityFilter,
   statusFilter,
   setStatusFilter,
+  stageCounts,
   openWizard,
   openIncident,
 }: {
@@ -2217,6 +2368,7 @@ function IncidentsView({
   setPriorityFilter: (value: string) => void;
   statusFilter: IncidentViewFilter;
   setStatusFilter: (value: IncidentViewFilter) => void;
+  stageCounts: Record<IncidentViewFilter, number>;
   openWizard: () => void;
   openIncident: (incident: Incident) => void;
 }) {
@@ -2257,18 +2409,28 @@ function IncidentsView({
             <option>Baja</option>
           </select>
         </label>
-        <label>
-          Estado
-          <select
-            value={statusFilter}
-            onChange={(event) =>
-              setStatusFilter(event.target.value as IncidentViewFilter)
-            }
+      </section>
+      <section className="incident-stage-tabs" aria-label="Etapas de los reportes">
+        {(
+          [
+            ["Iniciados", "Recién ingresados o en revisión"],
+            ["En gestión", "Con acciones o seguimiento registrado"],
+            ["Resueltos", "Histórico operativo de los últimos 7 días"],
+          ] as Array<[IncidentViewFilter, string]>
+        ).map(([stage, description]) => (
+          <button
+            key={stage}
+            type="button"
+            className={statusFilter === stage ? "active" : ""}
+            onClick={() => setStatusFilter(stage)}
           >
-            <option value="Activos">Activos</option>
-            <option value="Resueltos">Resueltos · últimos 7 días</option>
-          </select>
-        </label>
+            <span>{stageCounts[stage]}</span>
+            <div>
+              <strong>{stage}</strong>
+              <small>{description}</small>
+            </div>
+          </button>
+        ))}
       </section>
       <section className="panel incidents-panel">
         <div className="panel-heading">
@@ -2276,9 +2438,11 @@ function IncidentsView({
             <span className="eyebrow">Resultados</span>
             <h2>
               {incidents.length}{" "}
-              {statusFilter === "Activos"
-                ? "incidentes activos"
-                : "incidentes resueltos"}
+              {statusFilter === "Resueltos"
+                ? "incidentes resueltos"
+                : statusFilter === "Iniciados"
+                  ? "reportes iniciados"
+                  : "reportes en gestión"}
             </h2>
           </div>
         </div>
@@ -2294,16 +2458,20 @@ function IncidentsView({
             <div className="empty-state">
               <span>⌕</span>
               <strong>
-                {statusFilter === "Activos"
-                  ? "No existen incidentes activos"
-                  : "No existen incidentes resueltos en los últimos 7 días"}
+                {statusFilter === "Iniciados"
+                  ? "No existen reportes iniciados"
+                  : statusFilter === "En gestión"
+                    ? "No existen reportes en gestión"
+                    : "No existen incidentes resueltos en los últimos 7 días"}
               </strong>
               <p>
                 {search || priorityFilter !== "Todas"
                   ? "Prueba con otra palabra o limpia los filtros aplicados."
-                  : statusFilter === "Activos"
-                    ? "Cada nueva falla reportada aparecerá automáticamente aquí."
-                    : "Los incidentes resueltos se retiran después de siete días."}
+                  : statusFilter === "Iniciados"
+                    ? "Cada nueva situación reportada aparecerá automáticamente aquí."
+                    : statusFilter === "En gestión"
+                      ? "Los reportes pasarán a esta etapa cuando se registre una gestión."
+                      : "Los incidentes resueltos se retiran después de siete días."}
               </p>
             </div>
           )}
@@ -2753,6 +2921,8 @@ function ReportsView({
     reportTime: string,
     reportIncidents: Incident[],
     scope: string,
+    executiveSummary: string,
+    observations: string,
   ) => Promise<string>;
   downloadPdf: (
     reportIncidents: Incident[],
@@ -2760,6 +2930,8 @@ function ReportsView({
     reportTime: string,
     scope: string,
     generatedBy: string,
+    executiveSummary: string,
+    observations: string,
   ) => Promise<void>;
   openIncident: (incident: Incident) => void;
 }) {
@@ -2770,6 +2942,8 @@ function ReportsView({
   const [provinceFilter, setProvinceFilter] = useState("Todas");
   const [communeFilter, setCommuneFilter] = useState("Todas");
   const [selectedReportId, setSelectedReportId] = useState("");
+  const [executiveSummary, setExecutiveSummary] = useState("");
+  const [observations, setObservations] = useState("");
   const provinces = [...new Set(systems.map((system) => system.province))].sort(
     (a, b) => a.localeCompare(b, "es"),
   );
@@ -2817,6 +2991,27 @@ function ReportsView({
       incident.water === "Parcial" || incident.water === "Interrumpido",
   ).length;
   const latestReports = generatedReports.slice(0, 6);
+  const selectedSnapshotIndex = selectedSnapshot
+    ? generatedReports.findIndex((report) => report.id === selectedSnapshot.id)
+    : -1;
+  const comparisonSnapshot = selectedSnapshot
+    ? generatedReports[selectedSnapshotIndex + 1]
+    : generatedReports[0];
+  const currentCodes = new Set(previewIncidents.map((incident) => incident.code));
+  const previousCodes = new Set(
+    comparisonSnapshot?.incidents.map((incident) => incident.code) ?? [],
+  );
+  const newSincePrevious = previewIncidents.filter(
+    (incident) => !previousCodes.has(incident.code),
+  ).length;
+  const resolvedSincePrevious = (comparisonSnapshot?.incidents ?? []).filter(
+    (incident) => !currentCodes.has(incident.code),
+  ).length;
+  const previousAffected = (comparisonSnapshot?.incidents ?? []).reduce(
+    (total, incident) => total + incident.affected,
+    0,
+  );
+  const affectedVariation = affected - previousAffected;
 
   useEffect(() => {
     const refreshClock = () => {
@@ -2842,6 +3037,8 @@ function ReportsView({
       issued.time,
       territorialIncidents,
       scope,
+      executiveSummary,
+      observations,
     );
     if (id) setSelectedReportId(id);
   }
@@ -2853,6 +3050,8 @@ function ReportsView({
     setProvinceFilter(province);
     setCommuneFilter(commune);
     setSelectedReportId("");
+    setExecutiveSummary("");
+    setObservations("");
   }
 
   return (
@@ -2905,6 +3104,8 @@ function ReportsView({
             onChange={(event) => {
               setCommuneFilter(event.target.value);
               setSelectedReportId("");
+              setExecutiveSummary("");
+              setObservations("");
             }}
           >
             <option>Todas</option>
@@ -2933,6 +3134,32 @@ function ReportsView({
         </div>
       </section>
 
+      <section className="report-comparison" aria-label="Cambios desde el informe anterior">
+        <div>
+          <span className="eyebrow">Evolución</span>
+          <strong>
+            {comparisonSnapshot
+              ? `Comparación con ${comparisonSnapshot.id}`
+              : "Primer informe del período"}
+          </strong>
+        </div>
+        <article>
+          <small>Nuevos</small>
+          <strong>+{newSincePrevious}</strong>
+        </article>
+        <article>
+          <small>Resueltos</small>
+          <strong>{resolvedSincePrevious}</strong>
+        </article>
+        <article>
+          <small>Variación de arranques</small>
+          <strong>
+            {affectedVariation > 0 ? "+" : ""}
+            {formatNumber(affectedVariation)}
+          </strong>
+        </article>
+      </section>
+
       <section className="report-kpis" aria-label="Resumen del informe">
         <article>
           <span className="report-kpi-icon blue">!</span>
@@ -2955,7 +3182,7 @@ function ReportsView({
           <div>
             <small>Arranques afectados</small>
             <strong>{formatNumber(affected)}</strong>
-            <em>Estimación consolidada</em>
+            <em>≈ {formatNumber(estimatedPeople(affected))} personas</em>
           </div>
         </article>
         <article>
@@ -2978,6 +3205,26 @@ function ReportsView({
               activos para el territorio seleccionado.
             </p>
           </header>
+          <div className="report-narratives">
+            <label>
+              Resumen ejecutivo
+              <textarea
+                rows={4}
+                value={executiveSummary}
+                onChange={(event) => setExecutiveSummary(event.target.value)}
+                placeholder="Describe brevemente la situación regional, principales afectaciones y necesidades de coordinación."
+              />
+            </label>
+            <label>
+              Observaciones del informe
+              <textarea
+                rows={4}
+                value={observations}
+                onChange={(event) => setObservations(event.target.value)}
+                placeholder="Agrega antecedentes, limitaciones de la información o acciones pendientes."
+              />
+            </label>
+          </div>
           <div className="report-checklist">
             <span><i>✓</i> Resumen ejecutivo</span>
             <span><i>✓</i> Estado del agua y energía</span>
@@ -3025,6 +3272,8 @@ function ReportsView({
                 reportTime,
                 selectedSnapshot?.scope ?? scope,
                 selectedSnapshot?.generatedBy ?? user.name,
+                selectedSnapshot?.executiveSummary ?? executiveSummary,
+                selectedSnapshot?.observations ?? observations,
               )}
             >
               <span>↓</span> Descargar PDF
@@ -3075,8 +3324,21 @@ function ReportsView({
             <div><small>Incidentes</small><strong>{previewIncidents.length}</strong></div>
             <div><small>Sistemas</small><strong>{representedSystems}</strong></div>
             <div><small>Arranques</small><strong>{formatNumber(affected)}</strong></div>
+            <div><small>Personas estimadas</small><strong>{formatNumber(estimatedPeople(affected))}</strong></div>
             <div><small>Críticos</small><strong>{critical}</strong></div>
           </div>
+          {(selectedSnapshot?.executiveSummary ?? executiveSummary) && (
+            <section className="official-report-narrative">
+              <span className="eyebrow">Resumen ejecutivo</span>
+              <p>{selectedSnapshot?.executiveSummary ?? executiveSummary}</p>
+            </section>
+          )}
+          {(selectedSnapshot?.observations ?? observations) && (
+            <section className="official-report-narrative observations">
+              <span className="eyebrow">Observaciones</span>
+              <p>{selectedSnapshot?.observations ?? observations}</p>
+            </section>
+          )}
           <section className="official-report-section">
             <div className="official-section-heading">
               <span>01</span>
@@ -3117,7 +3379,9 @@ function ReportsView({
                   <span role="cell">{incident.electricity}</span>
                   <span role="cell">
                     <strong>{formatNumber(incident.affected)}</strong>
-                    <small>arranques</small>
+                    <small>
+                      arranques · ≈ {formatNumber(estimatedPeople(incident.affected))} personas
+                    </small>
                   </span>
                   <span role="cell">
                     <strong>{incident.status}</strong>
@@ -3141,9 +3405,9 @@ function ReportsView({
               </div>
             </div>
             <p>
-              Se mantiene seguimiento sobre los sistemas informados. Los
-              antecedentes corresponden a los registros operativos disponibles
-              al momento de emitir el informe.
+              {selectedSnapshot?.observations ||
+                observations ||
+                "Se mantiene seguimiento sobre los sistemas informados. Los antecedentes corresponden a los registros operativos disponibles al momento de emitir el informe."}
             </p>
           </section>
           <footer className="official-report-footer">
@@ -3260,6 +3524,8 @@ function ReportsView({
                   onClick={() => {
                     setReportDate(report.reportDate);
                     setReportTime(report.reportTime);
+                    setExecutiveSummary(report.executiveSummary ?? "");
+                    setObservations(report.observations ?? "");
                     setSelectedReportId(report.id);
                     window.scrollTo({ top: 0, behavior: "smooth" });
                   }}
@@ -3587,7 +3853,7 @@ function UsersView({ currentUser }: { currentUser: AuthenticatedUser }) {
             <input
               value={name}
               onChange={(event) => setName(event.target.value)}
-              placeholder="Ej.: Carmen Gloria"
+              placeholder="Ej.: Marcelo Andrés Ulloa Solís"
               autoFocus
             />
           </label>
@@ -4191,8 +4457,12 @@ function ReportWizard({
                   onChange={(event) => updateDraft("category", event.target.value)}
                 >
                   <option value="">Selecciona una categoría</option>
-                  {categories.map((category) => (
-                    <option key={category}>{category}</option>
+                  {categoryGroups.map((group) => (
+                    <optgroup key={group.label} label={group.label}>
+                      {group.options.map((category) => (
+                        <option key={category}>{category}</option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
               </label>
@@ -4262,6 +4532,10 @@ function ReportWizard({
                   }
                   placeholder={`Máximo ${selectedSystem?.connections ?? 0}`}
                 />
+                <small className="people-estimate">
+                  ≈ {formatNumber(estimatedPeople(Number(draft.affected) || 0))}{" "}
+                  personas afectadas · criterio de {PEOPLE_PER_CONNECTION} habitantes por arranque
+                </small>
               </label>
               <label>
                 Sectores afectados
@@ -4372,6 +4646,12 @@ function ReportWizard({
                   <div>
                     <dt>Arranques afectados</dt>
                     <dd>{draft.affected || "0"}</dd>
+                  </div>
+                  <div>
+                    <dt>Personas afectadas</dt>
+                    <dd>
+                      ≈ {formatNumber(estimatedPeople(Number(draft.affected) || 0))}
+                    </dd>
                   </div>
                   <div>
                     <dt>Ingresado por</dt>
@@ -4503,10 +4783,39 @@ function IncidentDetail({
                 <strong>{formatNumber(incident.affected)}</strong>
               </div>
               <div>
+                <small>Personas afectadas</small>
+                <strong>≈ {formatNumber(estimatedPeople(incident.affected))}</strong>
+              </div>
+              <div>
                 <small>Responsable actual</small>
                 <strong>{incident.responsible}</strong>
               </div>
             </div>
+            {(incident.sectors ||
+              incident.support ||
+              incident.notes ||
+              (incident.latitude != null && incident.longitude != null)) && (
+              <div className="incident-extra-data">
+                {incident.sectors && (
+                  <p><small>Sectores afectados</small><strong>{incident.sectors}</strong></p>
+                )}
+                {incident.support && (
+                  <p><small>Apoyo requerido</small><strong>{incident.support}</strong></p>
+                )}
+                {incident.notes && (
+                  <p><small>Observaciones técnicas</small><strong>{incident.notes}</strong></p>
+                )}
+                {incident.latitude != null && incident.longitude != null && (
+                  <a
+                    href={`https://www.google.com/maps?q=${incident.latitude},${incident.longitude}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Ver ubicación registrada ↗
+                  </a>
+                )}
+              </div>
+            )}
           </section>
           <section className="timeline-section">
             <span className="eyebrow">Historial inalterable</span>
@@ -4527,6 +4836,38 @@ function IncidentDetail({
                   <span>Registro de apertura del incidente</span>
                 </p>
               </div>
+              {!!incident.attachments?.length && (
+                <div className="timeline-photo-event">
+                  <i />
+                  <div>
+                    <p>
+                      <strong>Fotografías incorporadas</strong>
+                      <span>
+                        {incident.attachments.length} archivo
+                        {incident.attachments.length === 1 ? "" : "s"} disponible
+                        {incident.attachments.length === 1 ? "" : "s"} en la trazabilidad
+                      </span>
+                    </p>
+                    <div className="trace-photo-grid">
+                      {incident.attachments.map((attachment) => (
+                        <a
+                          key={attachment.id}
+                          href={attachment.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          title={`Abrir ${attachment.fileName}`}
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={attachment.url} alt={attachment.fileName} />
+                          <span>
+                            {attachment.uploadedBy} · {attachment.createdAt}
+                          </span>
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
               {(incident.followUps ?? []).map((followUp) => (
                 <div
                   key={followUp.id}
@@ -4537,7 +4878,9 @@ function IncidentDetail({
                   <i />
                   <p>
                     <strong>
-                      {followUp.status === "Resuelto"
+                      {followUp.eventType === "photo_added"
+                        ? "Registro fotográfico actualizado"
+                        : followUp.status === "Resuelto"
                         ? "Alerta resuelta"
                         : `Seguimiento · ${followUp.status}`}
                     </strong>
