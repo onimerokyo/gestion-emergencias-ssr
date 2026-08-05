@@ -429,6 +429,68 @@ function estimatedPeople(connections: number) {
   return Math.max(0, connections || 0) * PEOPLE_PER_CONNECTION;
 }
 
+type PdfImage = {
+  dataUrl: string;
+  width: number;
+  height: number;
+};
+
+async function attachmentToPdfImage(
+  attachment: IncidentAttachment,
+): Promise<PdfImage> {
+  if (!attachment.url) {
+    throw new Error(`La fotografía ${attachment.fileName} no tiene una URL válida.`);
+  }
+
+  const response = await fetch(attachment.url, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`No fue posible descargar ${attachment.fileName}.`);
+  }
+
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () =>
+        reject(new Error(`No fue posible procesar ${attachment.fileName}.`));
+      element.src = objectUrl;
+    });
+    const sourceWidth = image.naturalWidth || image.width;
+    const sourceHeight = image.naturalHeight || image.height;
+    if (!sourceWidth || !sourceHeight) {
+      throw new Error(`La fotografía ${attachment.fileName} no tiene dimensiones válidas.`);
+    }
+
+    const maxPixelDimension = 1800;
+    const reduction = Math.min(
+      1,
+      maxPixelDimension / Math.max(sourceWidth, sourceHeight),
+    );
+    const width = Math.max(1, Math.round(sourceWidth * reduction));
+    const height = Math.max(1, Math.round(sourceHeight * reduction));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error(`No fue posible preparar ${attachment.fileName}.`);
+    }
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, width, height);
+    context.drawImage(image, 0, 0, width, height);
+
+    return {
+      dataUrl: canvas.toDataURL("image/jpeg", 0.86),
+      width,
+      height,
+    };
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 function incidentOperationalStage(incident: Incident): IncidentViewFilter {
   if (isResolvedIncident(incident)) return "Resueltos";
   if (incident.status === "Reportado" || incident.status === "En revisión") {
@@ -898,10 +960,32 @@ export default function EmergencyApp() {
 
   async function downloadIncidentPdf(incident: Incident) {
     try {
+      setToast("Preparando informe y registro fotográfico…");
+      let reportIncident = incident;
+      if (incident.attachments?.length) {
+        try {
+          const refreshedResponse = await apiFetch("/api/incidents", {
+            cache: "no-store",
+          });
+          const refreshed = (await refreshedResponse.json()) as {
+            incidents?: Incident[];
+          };
+          reportIncident =
+            refreshed.incidents?.find((item) => item.id === incident.id) ??
+            incident;
+        } catch {
+          // Si la actualización falla, todavía se intentan usar los enlaces vigentes.
+        }
+      }
+
+      const attachments = reportIncident.attachments ?? [];
       const [{ jsPDF }, logoResponse] = await Promise.all([
         import("jspdf"),
         fetch(assetUrl("mop-institucional.png")),
       ]);
+      if (!logoResponse.ok) {
+        throw new Error("No fue posible cargar la imagen institucional.");
+      }
       const logoBlob = await logoResponse.blob();
       const logoDataUrl = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
@@ -909,7 +993,25 @@ export default function EmergencyApp() {
         reader.onerror = () => reject(reader.error);
         reader.readAsDataURL(logoBlob);
       });
-      const system = systems.find((item) => item.code === incident.systemCode);
+      const photoResults = await Promise.allSettled(
+        attachments.map(async (attachment) => ({
+          attachment,
+          image: await attachmentToPdfImage(attachment),
+        })),
+      );
+      const availablePhotos = photoResults.flatMap((result) =>
+        result.status === "fulfilled" ? [result.value] : [],
+      );
+      const unavailablePhotoCount = attachments.length - availablePhotos.length;
+      if (attachments.length && !availablePhotos.length) {
+        throw new Error(
+          "No fue posible incorporar la fotografía. Actualiza la página e intenta nuevamente.",
+        );
+      }
+
+      const system = systems.find(
+        (item) => item.code === reportIncident.systemCode,
+      );
       const document = new jsPDF({
         orientation: "portrait",
         unit: "mm",
@@ -985,7 +1087,7 @@ export default function EmergencyApp() {
       document.setFont("helvetica", "normal");
       document.setFontSize(7.5);
       document.setTextColor(91, 112, 128);
-      document.text(incident.code, pageWidth - margin, y + 21, {
+      document.text(reportIncident.code, pageWidth - margin, y + 21, {
         align: "right",
       });
       y += 39;
@@ -997,14 +1099,14 @@ export default function EmergencyApp() {
       document.setFontSize(17);
       document.setTextColor(18, 49, 73);
       document.text(
-        document.splitTextToSize(incident.system, contentWidth),
+        document.splitTextToSize(reportIncident.system, contentWidth),
         margin,
         y,
       );
       y += 10;
       document.setFontSize(10);
       document.setTextColor(70, 96, 116);
-      document.text(incident.category, margin, y);
+      document.text(reportIncident.category, margin, y);
       y += 8;
 
       const gap = 4;
@@ -1012,42 +1114,51 @@ export default function EmergencyApp() {
       field("Región", "La Araucanía", margin, half, y);
       field("Comuna", system?.commune ?? "Sin información", margin + half + gap, half, y);
       y += 23;
-      field("Estado", incident.status, margin, half, y);
-      field("Prioridad", incident.priority, margin + half + gap, half, y);
+      field("Estado", reportIncident.status, margin, half, y);
+      field("Prioridad", reportIncident.priority, margin + half + gap, half, y);
       y += 23;
-      field("Estado del agua", incident.water, margin, half, y);
-      field("Estado eléctrico", incident.electricity, margin + half + gap, half, y);
+      field("Estado del agua", reportIncident.water, margin, half, y);
+      field("Estado eléctrico", reportIncident.electricity, margin + half + gap, half, y);
       y += 23;
       field(
         "Arranques afectados",
-        formatNumber(incident.affected),
+        formatNumber(reportIncident.affected),
         margin,
         half,
         y,
       );
       field(
         "Personas afectadas (estimación)",
-        formatNumber(estimatedPeople(incident.affected)),
+        formatNumber(estimatedPeople(reportIncident.affected)),
         margin + half + gap,
         half,
         y,
       );
       y += 23;
-      field("Responsable actual", incident.responsible, margin, half, y);
-      field("Sectores afectados", incident.sectors || "Sin información", margin + half + gap, half, y);
+      field("Responsable actual", reportIncident.responsible, margin, half, y);
+      field("Sectores afectados", reportIncident.sectors || "Sin información", margin + half + gap, half, y);
       y += 25;
 
       sectionTitle("Situación informada");
-      writeWrapped(incident.description, { size: 9.5 });
+      writeWrapped(reportIncident.description, { size: 9.5 });
 
-      if (incident.support || incident.notes || incident.latitude != null) {
+      if (
+        reportIncident.support ||
+        reportIncident.notes ||
+        reportIncident.latitude != null
+      ) {
         sectionTitle("Antecedentes complementarios");
         writeWrapped(
           [
-            incident.support ? `Apoyo requerido: ${incident.support}` : "",
-            incident.notes ? `Observaciones técnicas: ${incident.notes}` : "",
-            incident.latitude != null && incident.longitude != null
-              ? `Coordenadas: ${incident.latitude}, ${incident.longitude}`
+            reportIncident.support
+              ? `Apoyo requerido: ${reportIncident.support}`
+              : "",
+            reportIncident.notes
+              ? `Observaciones técnicas: ${reportIncident.notes}`
+              : "",
+            reportIncident.latitude != null &&
+            reportIncident.longitude != null
+              ? `Coordenadas: ${reportIncident.latitude}, ${reportIncident.longitude}`
               : "",
           ]
             .filter(Boolean)
@@ -1056,13 +1167,84 @@ export default function EmergencyApp() {
         );
       }
 
+      if (availablePhotos.length) {
+        const photoCards = availablePhotos.map(({ attachment, image }, index) => {
+          const maxImageWidth = contentWidth - 6;
+          const maxImageHeight = 92;
+          const scale = Math.min(
+            maxImageWidth / image.width,
+            maxImageHeight / image.height,
+          );
+          const imageWidth = image.width * scale;
+          const imageHeight = image.height * scale;
+          const caption = `Fotografía ${index + 1} · ${attachment.fileName}\n${attachment.uploadedBy} · ${attachment.createdAt}`;
+          const captionLines = document.splitTextToSize(
+            caption,
+            contentWidth - 8,
+          ) as string[];
+          return {
+            attachment,
+            image,
+            imageWidth,
+            imageHeight,
+            captionLines,
+            height: imageHeight + captionLines.length * 3.7 + 9,
+          };
+        });
+
+        ensureSpace(13 + photoCards[0].height);
+        sectionTitle("Registro fotográfico");
+        photoCards.forEach((photo) => {
+          ensureSpace(photo.height + 4);
+          document.setFillColor(247, 250, 252);
+          document.setDrawColor(218, 229, 236);
+          document.roundedRect(
+            margin,
+            y,
+            contentWidth,
+            photo.height,
+            2,
+            2,
+            "FD",
+          );
+          const imageX = margin + (contentWidth - photo.imageWidth) / 2;
+          document.addImage(
+            photo.image.dataUrl,
+            "JPEG",
+            imageX,
+            y + 3,
+            photo.imageWidth,
+            photo.imageHeight,
+            undefined,
+            "FAST",
+          );
+          document.setFont("helvetica", "normal");
+          document.setFontSize(7.2);
+          document.setTextColor(82, 105, 122);
+          document.text(
+            photo.captionLines,
+            margin + 4,
+            y + photo.imageHeight + 7,
+          );
+          y += photo.height + 4;
+        });
+        if (unavailablePhotoCount) {
+          writeWrapped(
+            unavailablePhotoCount === 1
+              ? "1 fotografía no pudo incorporarse al documento."
+              : `${unavailablePhotoCount} fotografías no pudieron incorporarse al documento.`,
+            { size: 7.5, color: [154, 83, 24] },
+          );
+        }
+      }
+
       sectionTitle("Trazabilidad");
       const events = [
         {
           title: "Reporte ingresado",
-          detail: `Por ${incident.enteredBy} · ${incident.createdAt}`,
+          detail: `Por ${reportIncident.enteredBy} · ${reportIncident.createdAt}`,
         },
-        ...(incident.followUps ?? []).map((followUp) => ({
+        ...(reportIncident.followUps ?? []).map((followUp) => ({
           title:
             followUp.status === "Resuelto"
               ? "Alerta cerrada"
@@ -1093,7 +1275,7 @@ export default function EmergencyApp() {
 
       sectionTitle("Antecedentes del registro");
       writeWrapped(
-        `Reportado por: ${incident.reportedBy}\nIngresado por: ${incident.enteredBy}\nCódigo del sistema: ${incident.systemCode}\nProvincia: ${system?.province ?? "Sin información"}`,
+        `Reportado por: ${reportIncident.reportedBy}\nIngresado por: ${reportIncident.enteredBy}\nCódigo del sistema: ${reportIncident.systemCode}\nProvincia: ${system?.province ?? "Sin información"}`,
         { size: 8.5 },
       );
 
@@ -1102,31 +1284,42 @@ export default function EmergencyApp() {
         dateStyle: "long",
         timeStyle: "short",
       });
-      document.setFont("helvetica", "normal");
-      document.setFontSize(7);
-      document.setTextColor(105, 124, 138);
-      document.text(
-        `Informe generado por ${user.name} · ${generatedAt}`,
-        margin,
-        289,
-      );
-      document.text(
-        `Página ${document.getNumberOfPages()}`,
-        pageWidth - margin,
-        289,
-        { align: "right" },
-      );
+      const pageCount = document.getNumberOfPages();
+      for (let page = 1; page <= pageCount; page += 1) {
+        document.setPage(page);
+        document.setFont("helvetica", "normal");
+        document.setFontSize(7);
+        document.setTextColor(105, 124, 138);
+        document.text(
+          `Informe generado por ${user.name} · ${generatedAt}`,
+          margin,
+          289,
+        );
+        document.text(`Página ${page} de ${pageCount}`, pageWidth - margin, 289, {
+          align: "right",
+        });
+      }
 
-      const safeSystemName = incident.system
+      const safeSystemName = reportIncident.system
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "")
         .replace(/[^a-zA-Z0-9]+/g, "-")
         .replace(/^-|-$/g, "")
         .toLowerCase();
-      document.save(`informe-falla-${incident.code}-${safeSystemName}.pdf`);
-      setToast(`Informe ${incident.code} descargado en PDF.`);
-    } catch {
-      setToast("No fue posible generar el informe. Intenta nuevamente.");
+      document.save(
+        `informe-falla-${reportIncident.code}-${safeSystemName}.pdf`,
+      );
+      setToast(
+        availablePhotos.length
+          ? `Informe ${reportIncident.code} descargado con ${availablePhotos.length} fotografía${availablePhotos.length === 1 ? "" : "s"}.`
+          : `Informe ${reportIncident.code} descargado en PDF.`,
+      );
+    } catch (error) {
+      setToast(
+        error instanceof Error
+          ? error.message
+          : "No fue posible generar el informe. Intenta nuevamente.",
+      );
     }
   }
 
