@@ -40,6 +40,16 @@ type RawEvent = {
   created_at: string;
 };
 
+type RawAttachment = {
+  id: string;
+  storage_path: string;
+  file_name: string;
+  mime_type: string;
+  file_size?: number | null;
+  uploaded_by_name: string;
+  created_at: string;
+};
+
 type RawIncident = {
   id: string;
   code: string;
@@ -60,8 +70,14 @@ type RawIncident = {
   resolved_at?: string | null;
   created_at: string;
   updated_at: string;
+  sectors?: string | null;
+  support_required?: string | null;
+  internal_notes?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
   systems: RawSystem | RawSystem[];
   incident_events?: RawEvent[];
+  incident_attachments?: RawAttachment[];
 };
 
 type RawReport = {
@@ -71,7 +87,13 @@ type RawReport = {
   scope: string;
   generated_by_name: string;
   generated_at: string;
-  payload: unknown[];
+  payload:
+    | unknown[]
+    | {
+        incidents?: unknown[];
+        executiveSummary?: string;
+        observations?: string;
+      };
 };
 
 type RawComment = {
@@ -86,8 +108,10 @@ const INCIDENT_SELECT = [
   "id,code,category,priority,description,affected_connections,affected_at_report",
   "water_status,electrical_status,status,workflow_status,assigned_to_name",
   "reported_by_name,informed_by_name,occurred_at,reported_at,resolved_at,created_at,updated_at",
+  "sectors,support_required,internal_notes,latitude,longitude",
   "systems!inner(id,official_code,name,province,comuna)",
   "incident_events(id,event_type,comment,display_status,to_status,actor_name,created_at)",
+  "incident_attachments(id,storage_path,file_name,mime_type,file_size,uploaded_by_name,created_at)",
 ].join(",");
 
 export function assetUrl(path: string) {
@@ -209,7 +233,12 @@ async function handleIncidents(method: string, init: RequestInit) {
       .select(INCIDENT_SELECT)
       .order("reported_at", { ascending: false });
     if (error) throw error;
-    return json({ incidents: (data ?? []).map((row) => mapIncident(row as unknown as RawIncident)) });
+    const incidents = await Promise.all(
+      (data ?? []).map((row) =>
+        mapIncidentWithAttachments(row as unknown as RawIncident),
+      ),
+    );
+    return json({ incidents });
   }
   if (user.role === "viewer") {
     return json({ error: "Tu perfil es solo de consulta." }, 403);
@@ -259,7 +288,10 @@ async function handleIncidents(method: string, init: RequestInit) {
       .select(INCIDENT_SELECT)
       .single();
     if (error) throw error;
-    return json({ incident: mapIncident(data as unknown as RawIncident) }, 201);
+    return json(
+      { incident: await mapIncidentWithAttachments(data as unknown as RawIncident) },
+      201,
+    );
   }
   if (method === "PATCH") {
     const id = text(body.id);
@@ -309,7 +341,9 @@ async function handleIncidents(method: string, init: RequestInit) {
       .maybeSingle();
     if (error) throw error;
     if (!data) return json({ error: "El incidente no existe." }, 404);
-    return json({ incident: mapIncident(data as unknown as RawIncident) });
+    return json({
+      incident: await mapIncidentWithAttachments(data as unknown as RawIncident),
+    });
   }
   return json({ error: "Método no permitido." }, 405);
 }
@@ -370,6 +404,14 @@ async function handlePhotos(init: RequestInit) {
     if (attachmentError) throw attachmentError;
     uploaded.push(storagePath);
   }
+  const { error: eventError } = await supabase.from("incident_events").insert({
+    incident_id: incidentId,
+    event_type: "photo_added",
+    comment: `${uploaded.length} fotografía${uploaded.length === 1 ? "" : "s"} incorporada${uploaded.length === 1 ? "" : "s"} al reporte.`,
+    actor_id: user.id,
+    actor_name: user.name,
+  });
+  if (eventError) throw eventError;
   return json({ ok: true, uploaded }, 201);
 }
 
@@ -409,7 +451,11 @@ async function handleReports(method: string, init: RequestInit) {
         scope: body.scope,
         generated_by: user.id,
         generated_by_name: user.name,
-        payload: body.incidents,
+        payload: {
+          incidents: body.incidents,
+          executiveSummary: text(body.executiveSummary),
+          observations: text(body.observations),
+        },
       })
       .select(
         "id,report_date,report_time,scope,generated_by_name,generated_at,payload",
@@ -572,6 +618,31 @@ function mapUser(raw: User) {
   };
 }
 
+async function mapIncidentWithAttachments(raw: RawIncident) {
+  const incident = mapIncident(raw);
+  const attachments = raw.incident_attachments ?? [];
+  if (!attachments.length) return incident;
+  const { data, error } = await supabase.storage
+    .from("incident-photos")
+    .createSignedUrls(
+      attachments.map((attachment) => attachment.storage_path),
+      60 * 60,
+    );
+  if (error) throw error;
+  return {
+    ...incident,
+    attachments: attachments.map((attachment, index) => ({
+      id: attachment.id,
+      url: data?.[index]?.signedUrl ?? "",
+      fileName: attachment.file_name,
+      mimeType: attachment.mime_type,
+      fileSize: attachment.file_size ?? 0,
+      uploadedBy: attachment.uploaded_by_name,
+      createdAt: formatChile(attachment.created_at),
+    })),
+  };
+}
+
 function mapIncident(raw: RawIncident) {
   const system = Array.isArray(raw.systems) ? raw.systems[0] : raw.systems;
   const events = [...(raw.incident_events ?? [])].sort(
@@ -585,6 +656,7 @@ function mapIncident(raw: RawIncident) {
       text: event.comment || "Actualización registrada",
       author: event.actor_name || "Usuario DOH",
       createdAt: formatChile(event.created_at),
+      eventType: event.event_type,
       status:
         event.display_status ||
         (event.to_status === "resolved"
@@ -619,11 +691,20 @@ function mapIncident(raw: RawIncident) {
     createdAt: formatChile(raw.occurred_at || raw.reported_at || raw.created_at),
     responsible: raw.assigned_to_name || "Por asignar",
     resolvedAt: raw.resolved_at || undefined,
+    sectors: raw.sectors || "",
+    support: raw.support_required || "",
+    notes: raw.internal_notes || "",
+    latitude: raw.latitude ?? undefined,
+    longitude: raw.longitude ?? undefined,
+    attachments: [],
     followUps,
   };
 }
 
 function mapReport(raw: RawReport) {
+  const payload = Array.isArray(raw.payload)
+    ? { incidents: raw.payload, executiveSummary: "", observations: "" }
+    : raw.payload ?? {};
   return {
     id: raw.id,
     reportDate: raw.report_date,
@@ -631,7 +712,9 @@ function mapReport(raw: RawReport) {
     scope: raw.scope,
     generatedAt: `${formatChile(raw.generated_at)} · horario de Chile`,
     generatedBy: raw.generated_by_name,
-    incidents: raw.payload,
+    incidents: Array.isArray(payload.incidents) ? payload.incidents : [],
+    executiveSummary: text(payload.executiveSummary),
+    observations: text(payload.observations),
   };
 }
 
