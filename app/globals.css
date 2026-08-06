@@ -17,6 +17,10 @@
   --red: #d83a52;
   --red-soft: #fff0f2;
   --green: #20885c;
+  --indigo: #4f5fb8;
+  --indigo-soft: #eef0ff;
+  --purple: #8a4ca4;
+  --purple-soft: #f7eefb;
   --shadow: 0 18px 50px rgba(18, 52, 74, 0.1);
 }
 
@@ -781,6 +785,219 @@ textarea:focus {
   font-weight: 760;
 }
 
+.email-health-banner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 13px;
+  margin-top: 16px;
+  padding: 13px 15px;
+  align-items: center;
+  border: 1px solid #d4e2e9;
+  border-radius: 13px;
+  background: #fff;
+  box-shadow: 0 7px 20px rgba(20, 54, 75, 0.035);
+}
+
+.email-health-icon {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: #edf4f7;
+  color: #446b7f;
+  font-size: 14px;
+  font-weight: 850;
+}
+
+.email-health-banner > div {
+  min-width: 0;
+}
+
+.email-health-banner small,
+.email-health-banner strong,
+.email-health-banner p {
+  display: block;
+}
+
+.email-health-banner small {
+  color: #6f8594;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.email-health-banner strong {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.email-health-banner p {
+  margin: 3px 0 0;
+  color: #6d8190;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.email-health-banner > button {
+  border: 0;
+  background: transparent;
+  color: var(--blue);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.email-health-error {
+  border-color: #efb9c1;
+  background: #fff8f9;
+}
+
+.email-health-error .email-health-icon {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.email-health-ok {
+  border-color: #b9dfd1;
+  background: #f7fcfa;
+}
+
+.email-health-ok .email-health-icon {
+  background: #e5f6ef;
+  color: var(--green);
+}
+
+.incident-domain-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.incident-domain-card {
+  --domain-color: var(--blue);
+  --domain-soft: var(--blue-soft);
+  display: grid;
+  min-width: 0;
+  min-height: 154px;
+  padding: 16px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: 1fr auto;
+  gap: 13px;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-top: 4px solid var(--domain-color);
+  border-radius: 14px;
+  background: #fff;
+  color: var(--ink);
+  text-align: left;
+  box-shadow: 0 8px 24px rgba(18, 52, 74, 0.035);
+  transition: transform 150ms ease, box-shadow 150ms ease;
+}
+
+.incident-domain-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 28px rgba(18, 52, 74, 0.08);
+}
+
+.domain-operational {
+  --domain-color: var(--red);
+  --domain-soft: var(--red-soft);
+}
+
+.domain-financial {
+  --domain-color: var(--indigo);
+  --domain-soft: var(--indigo-soft);
+}
+
+.domain-community {
+  --domain-color: var(--purple);
+  --domain-soft: var(--purple-soft);
+}
+
+.domain-card-icon {
+  display: inline-flex;
+  width: 39px;
+  height: 39px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 11px;
+  background: var(--domain-soft);
+  color: var(--domain-color);
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.domain-card-copy {
+  min-width: 0;
+}
+
+.domain-card-copy small,
+.domain-card-copy strong,
+.domain-card-copy em {
+  display: block;
+}
+
+.domain-card-copy small {
+  color: #748897;
+  font-size: 8px;
+  line-height: 1.35;
+}
+
+.domain-card-copy strong {
+  margin-top: 4px;
+  font-size: 13px;
+  letter-spacing: -0.02em;
+}
+
+.domain-card-copy em {
+  margin-top: 7px;
+  color: var(--domain-color);
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 760;
+}
+
+.domain-card-total {
+  display: flex;
+  min-width: 52px;
+  align-items: flex-end;
+  flex-direction: column;
+}
+
+.domain-card-total strong {
+  color: var(--domain-color);
+  font-size: 27px;
+  line-height: 1;
+}
+
+.domain-card-total small {
+  margin-top: 3px;
+  color: #718493;
+  font-size: 8px;
+}
+
+.domain-card-stages {
+  display: flex;
+  grid-column: 1 / -1;
+  gap: 8px;
+  padding-top: 11px;
+  border-top: 1px solid #edf1f4;
+}
+
+.domain-card-stages small {
+  flex: 1;
+  color: #708492;
+  font-size: 8px;
+}
+
+.domain-card-stages b {
+  float: right;
+  color: var(--ink);
+}
+
 .metrics-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -921,6 +1138,18 @@ textarea:focus {
   background: #f8fbfd;
 }
 
+.incident-row.incident-type-operational {
+  box-shadow: inset 3px 0 0 rgba(216, 58, 82, 0.78);
+}
+
+.incident-row.incident-type-financial {
+  box-shadow: inset 3px 0 0 rgba(79, 95, 184, 0.8);
+}
+
+.incident-row.incident-type-community {
+  box-shadow: inset 3px 0 0 rgba(138, 76, 164, 0.78);
+}
+
 .status-dot {
   display: inline-block;
   width: 8px;
@@ -954,25 +1183,47 @@ textarea:focus {
   flex-direction: column;
 }
 
-.incident-code {
+.incident-identity-line {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 6px;
+}
+
+.incident-code {
   color: #7b8f9f;
   font-family: var(--font-geist-mono), monospace;
   font-size: 8px;
 }
 
-.incident-code em {
-  padding: 2px 5px;
-  border-radius: 4px;
-  background: #eef3f7;
-  color: #8293a1;
-  font-family: var(--font-geist-sans), sans-serif;
+.incident-type-badge {
+  display: inline-flex;
+  max-width: 112px;
+  padding: 3px 6px;
+  overflow: hidden;
+  border-radius: 999px;
   font-size: 6px;
-  font-style: normal;
   font-weight: 800;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.045em;
+  line-height: 1;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.badge-operational {
+  background: var(--red-soft);
+  color: #b82740;
+}
+
+.badge-financial {
+  background: var(--indigo-soft);
+  color: #3f4ea5;
+}
+
+.badge-community {
+  background: var(--purple-soft);
+  color: #7a3d92;
 }
 
 .incident-main strong {
@@ -1222,6 +1473,105 @@ textarea:focus {
   margin: 26px 0 16px;
   padding: 14px;
   align-items: end;
+}
+
+.incident-type-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 12px;
+}
+
+.incident-type-tabs > button {
+  --type-color: #60798b;
+  --type-soft: #edf4f7;
+  display: grid;
+  min-width: 0;
+  min-height: 78px;
+  padding: 12px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: #fff;
+  color: var(--ink);
+  text-align: left;
+  box-shadow: 0 7px 20px rgba(20, 54, 75, 0.03);
+}
+
+.incident-type-tabs .type-operational {
+  --type-color: var(--red);
+  --type-soft: var(--red-soft);
+}
+
+.incident-type-tabs .type-financial {
+  --type-color: var(--indigo);
+  --type-soft: var(--indigo-soft);
+}
+
+.incident-type-tabs .type-community {
+  --type-color: var(--purple);
+  --type-soft: var(--purple-soft);
+}
+
+.incident-type-tabs > button > span {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  background: var(--type-soft);
+  color: var(--type-color);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.incident-type-tabs > button > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.incident-type-tabs strong {
+  overflow: hidden;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.incident-type-tabs small {
+  overflow: hidden;
+  margin-top: 3px;
+  color: #718593;
+  font-size: 7px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.incident-type-tabs > button > b {
+  color: var(--type-color);
+  font-size: 17px;
+}
+
+.incident-type-tabs > button.active {
+  border-color: color-mix(in srgb, var(--type-color) 48%, white);
+  background: var(--type-soft);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--type-color) 10%, transparent);
+}
+
+.incident-type-tabs > button.active > span {
+  background: var(--type-color);
+  color: #fff;
+}
+
+.result-type-label {
+  display: block;
+  margin-top: 4px;
+  color: #718593;
+  font-size: 8px;
 }
 
 .incident-stage-tabs {
@@ -3184,6 +3534,11 @@ textarea:focus {
   color: #17744f;
 }
 
+.provider-status.error {
+  background: var(--red-soft);
+  color: #b42740;
+}
+
 .notification-destination {
   display: grid;
   padding: 15px 18px;
@@ -3217,6 +3572,42 @@ textarea:focus {
   background: #fff9e9;
   color: #7b5b13;
   line-height: 1.5;
+}
+
+.email-diagnostic {
+  display: grid;
+  gap: 4px;
+  margin-top: 7px;
+  padding: 10px;
+  border: 1px solid #d8e4ea;
+  border-radius: 9px;
+  background: #f8fbfc;
+}
+
+.email-diagnostic strong {
+  font-size: 9px;
+}
+
+.email-diagnostic p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.email-diagnostic.error {
+  border-color: #edbac2;
+  background: #fff7f8;
+  color: #9f263b;
+}
+
+.email-diagnostic.error p,
+.email-diagnostic.error small {
+  color: #8f4552;
+}
+
+.email-diagnostic.success {
+  border-color: #b8ddcf;
+  background: #f3fbf7;
+  color: #176f51;
 }
 
 .test-email-button {
@@ -4705,6 +5096,10 @@ textarea:focus {
     grid-template-columns: 1fr 1fr;
   }
 
+  .incident-type-tabs {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .search-box {
     grid-column: 1 / -1;
   }
@@ -4919,6 +5314,28 @@ textarea:focus {
     display: none;
   }
 
+  .email-health-banner {
+    grid-template-columns: auto minmax(0, 1fr);
+    margin-top: 12px;
+  }
+
+  .email-health-banner > button {
+    grid-column: 2;
+    width: max-content;
+    padding: 0;
+  }
+
+  .incident-domain-grid {
+    grid-template-columns: 1fr;
+    gap: 9px;
+    margin-top: 12px;
+  }
+
+  .incident-domain-card {
+    min-height: 132px;
+    padding: 13px;
+  }
+
   .metrics-grid {
     grid-template-columns: 1fr 1fr;
     gap: 10px;
@@ -4971,6 +5388,21 @@ textarea:focus {
   .incident-stage-tabs {
     grid-template-columns: 1fr;
     gap: 8px;
+  }
+
+  .incident-type-tabs {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .incident-type-tabs > button {
+    min-height: 72px;
+    padding: 10px;
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .incident-type-tabs > button > b {
+    display: none;
   }
 
   .incident-stage-tabs > button {
@@ -5396,6 +5828,10 @@ textarea:focus {
 }
 
 @media (max-width: 390px) {
+  .incident-type-tabs {
+    grid-template-columns: 1fr;
+  }
+
   .metrics-grid {
     grid-template-columns: 1fr;
   }

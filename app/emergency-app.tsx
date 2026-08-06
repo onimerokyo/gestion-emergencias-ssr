@@ -17,6 +17,8 @@ import { apiFetch, assetUrl } from "./client-api";
 type Role = "admin" | "reporter" | "viewer";
 type View = "home" | "incidents" | "systems" | "reports" | "users";
 type IncidentViewFilter = "Iniciados" | "En gestión" | "Resueltos";
+type IncidentType = "operational" | "financial" | "community";
+type IncidentTypeFilter = "all" | IncidentType;
 type Priority = "Baja" | "Media" | "Alta" | "Crítica";
 type IncidentStatus =
   | "Reportado"
@@ -179,6 +181,13 @@ type EmailConnectionStatus = {
   sender: string;
   recipient: string;
   missingConfiguration: number;
+  health?: "ok" | "warning" | "error" | "unknown";
+  lastStatus?: "sent" | "error" | null;
+  lastAttemptAt?: string | null;
+  lastSentAt?: string | null;
+  lastError?: string | null;
+  dailyStatus?: "sent" | "error" | null;
+  dailyLastAttemptAt?: string | null;
 };
 
 type Draft = {
@@ -210,7 +219,31 @@ const NOTIFICATION_QUEUE_EVENT = "ssr-notification-queue-updated";
 const CHILE_TIME_ZONE = "America/Santiago";
 const INTERNAL_REFERENCE_TIMES = ["09:00", "12:00", "15:00", "19:00"];
 const PEOPLE_PER_CONNECTION = 4;
-const APP_VERSION = "1.3";
+const APP_VERSION = "1.4";
+
+const incidentTypeData: Record<
+  IncidentType,
+  { label: string; shortLabel: string; description: string; icon: string }
+> = {
+  operational: {
+    label: "Emergencias operacionales",
+    shortLabel: "Operacionales",
+    description: "Continuidad de agua, energía e infraestructura",
+    icon: "!",
+  },
+  financial: {
+    label: "Crisis financieras",
+    shortLabel: "Financieras",
+    description: "Deudas, insolvencia y riesgo de continuidad",
+    icon: "$",
+  },
+  community: {
+    label: "Crisis comunitarias",
+    shortLabel: "Comunitarias",
+    description: "Conflictos, protestas, tomas y gobernanza",
+    icon: "●",
+  },
+};
 
 function chileDateTimeParts(value = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -499,6 +532,13 @@ function incidentOperationalStage(incident: Incident): IncidentViewFilter {
   return "En gestión";
 }
 
+function incidentType(incident: Pick<Incident, "category">): IncidentType {
+  const category = normalizeSearchText(incident.category);
+  if (category.startsWith("crisis financiera")) return "financial";
+  if (category.startsWith("crisis comunitaria")) return "community";
+  return "operational";
+}
+
 function normalizeSearchText(value: string) {
   return value
     .normalize("NFD")
@@ -579,6 +619,8 @@ export default function EmergencyApp() {
   const [priorityFilter, setPriorityFilter] = useState("Todas");
   const [incidentStatusFilter, setIncidentStatusFilter] =
     useState<IncidentViewFilter>("Iniciados");
+  const [incidentTypeFilter, setIncidentTypeFilter] =
+    useState<IncidentTypeFilter>("all");
   const [online, setOnline] = useState(
     () => (typeof navigator === "undefined" ? true : navigator.onLine),
   );
@@ -744,21 +786,36 @@ export default function EmergencyApp() {
         isWithinOperationalResolution(incident),
     ).length,
   };
+  const incidentTypeCounts: Record<IncidentTypeFilter, number> = {
+    all: incidents.length,
+    operational: incidents.filter(
+      (incident) => incidentType(incident) === "operational",
+    ).length,
+    financial: incidents.filter(
+      (incident) => incidentType(incident) === "financial",
+    ).length,
+    community: incidents.filter(
+      (incident) => incidentType(incident) === "community",
+    ).length,
+  };
   const filteredIncidents = (() => {
-    const normalized = search.trim().toLowerCase();
+    const normalized = normalizeSearchText(search);
     return incidents.filter((incident) => {
       const matchesText =
         !normalized ||
-        incident.code.toLowerCase().includes(normalized) ||
-        incident.system.toLowerCase().includes(normalized) ||
-        incident.category.toLowerCase().includes(normalized);
+        normalizeSearchText(incident.code).includes(normalized) ||
+        normalizeSearchText(incident.system).includes(normalized) ||
+        normalizeSearchText(incident.category).includes(normalized);
       const matchesPriority =
         priorityFilter === "Todas" || incident.priority === priorityFilter;
+      const matchesType =
+        incidentTypeFilter === "all" ||
+        incidentType(incident) === incidentTypeFilter;
       const matchesStatus =
         incidentOperationalStage(incident) === incidentStatusFilter &&
         (incidentStatusFilter !== "Resueltos" ||
           isWithinOperationalResolution(incident));
-      return matchesText && matchesPriority && matchesStatus;
+      return matchesText && matchesPriority && matchesType && matchesStatus;
     });
   })();
 
@@ -816,6 +873,11 @@ export default function EmergencyApp() {
   function navigate(target: View) {
     if (target === "users" && role !== "admin") return;
     setView(target);
+  }
+
+  function openIncidentType(type: IncidentTypeFilter) {
+    setIncidentTypeFilter(type);
+    setView("incidents");
   }
 
   function openWizard() {
@@ -1873,6 +1935,7 @@ export default function EmergencyApp() {
               openWizard={openWizard}
               openIncident={setSelectedIncident}
               navigate={navigate}
+              openIncidentType={openIncidentType}
             />
           )}
           {view === "incidents" && (
@@ -1886,6 +1949,9 @@ export default function EmergencyApp() {
               statusFilter={incidentStatusFilter}
               setStatusFilter={setIncidentStatusFilter}
               stageCounts={incidentStageCounts}
+              typeFilter={incidentTypeFilter}
+              setTypeFilter={setIncidentTypeFilter}
+              typeCounts={incidentTypeCounts}
               openWizard={openWizard}
               openIncident={setSelectedIncident}
             />
@@ -2246,6 +2312,7 @@ function Dashboard({
   openWizard,
   openIncident,
   navigate,
+  openIncidentType,
 }: {
   role: Role;
   user: (typeof roleData)[Role];
@@ -2258,6 +2325,7 @@ function Dashboard({
   openWizard: () => void;
   openIncident: (incident: Incident) => void;
   navigate: (view: View) => void;
+  openIncidentType: (type: IncidentTypeFilter) => void;
 }) {
   const today = new Intl.DateTimeFormat("es-CL", {
     timeZone: CHILE_TIME_ZONE,
@@ -2291,6 +2359,30 @@ function Dashboard({
   const clearPercent = (clearSystems / systems.length) * 100;
   const trackingPercent =
     ((clearSystems + trackingSystems) / systems.length) * 100;
+  const domainStats = (type: IncidentType) => {
+    const matching = activeIncidents.filter(
+      (incident) => incidentType(incident) === type,
+    );
+    const started = matching.filter(
+      (incident) => incidentOperationalStage(incident) === "Iniciados",
+    ).length;
+    const inManagement = matching.filter(
+      (incident) => incidentOperationalStage(incident) === "En gestión",
+    ).length;
+    const affected = matching.reduce(
+      (total, incident) => total + incident.affected,
+      0,
+    );
+    return {
+      active: matching.length,
+      started,
+      inManagement,
+      affected,
+      systems: new Set(matching.map((incident) => incident.systemCode)).size,
+      critical: matching.filter((incident) => incident.priority === "Crítica")
+        .length,
+    };
+  };
 
   return (
     <>
@@ -2312,6 +2404,10 @@ function Dashboard({
         )}
       </section>
 
+      {role === "admin" && (
+        <DashboardEmailHealth navigate={navigate} />
+      )}
+
       <section className="cutoff-banner">
         <div className="cutoff-time">
           <span>INFORME</span>
@@ -2327,6 +2423,45 @@ function Dashboard({
         <button type="button" onClick={() => navigate("reports")}>
           Generar informe <span>→</span>
         </button>
+      </section>
+
+      <section
+        className="incident-domain-grid"
+        aria-label="Incidentes por naturaleza"
+      >
+        {(Object.keys(incidentTypeData) as IncidentType[]).map((type) => {
+          const metadata = incidentTypeData[type];
+          const stats = domainStats(type);
+          const impact =
+            type === "operational"
+              ? `${formatNumber(stats.affected)} arranques · ≈ ${formatNumber(estimatedPeople(stats.affected))} personas`
+              : `${stats.systems} SSR involucrados · ${stats.critical} críticos`;
+          return (
+            <button
+              className={`incident-domain-card domain-${type}`}
+              type="button"
+              key={type}
+              onClick={() => openIncidentType(type)}
+            >
+              <span className="domain-card-icon" aria-hidden="true">
+                {metadata.icon}
+              </span>
+              <span className="domain-card-copy">
+                <small>{metadata.description}</small>
+                <strong>{metadata.label}</strong>
+                <em>{impact}</em>
+              </span>
+              <span className="domain-card-total">
+                <strong>{stats.active}</strong>
+                <small>activos</small>
+              </span>
+              <span className="domain-card-stages">
+                <small>Iniciados <b>{stats.started}</b></small>
+                <small>En gestión <b>{stats.inManagement}</b></small>
+              </span>
+            </button>
+          );
+        })}
       </section>
 
       <section className="metrics-grid">
@@ -2345,16 +2480,16 @@ function Dashboard({
           icon="↑"
         />
         <MetricCard
-          label="Sistemas con afectación"
+          label="Sin continuidad de agua"
           value={withoutWater}
           note={`${withoutPower} sin suministro eléctrico`}
           tone="amber"
           icon="◒"
         />
         <MetricCard
-          label="Arranques afectados"
-          value={formatNumber(totalAffected)}
-          note={`≈ ${formatNumber(estimatedPeople(totalAffected))} personas`}
+          label="Personas afectadas"
+          value={`≈ ${formatNumber(estimatedPeople(totalAffected))}`}
+          note={`${formatNumber(totalAffected)} arranques informados`}
           tone="teal"
           icon="⌁"
         />
@@ -2475,6 +2610,67 @@ function Dashboard({
   );
 }
 
+function DashboardEmailHealth({ navigate }: { navigate: (view: View) => void }) {
+  const [status, setStatus] = useState<EmailConnectionStatus | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    apiFetch("/api/email/status", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("No disponible");
+        return response.json() as Promise<EmailConnectionStatus>;
+      })
+      .then((result) => {
+        if (active) setStatus(result);
+      })
+      .catch(() => {
+        if (active) {
+          setStatus({
+            configured: false,
+            provider: "Gmail API",
+            sender: NOTIFICATION_SENDER,
+            recipient: NOTIFICATION_RECIPIENT,
+            missingConfiguration: 1,
+            health: "unknown",
+          });
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const health = status?.health ?? "unknown";
+  const title =
+    health === "error"
+      ? "El correo automático requiere atención"
+      : health === "ok"
+        ? "Correo automático operativo"
+        : "Comprobando el correo automático";
+  const detail =
+    health === "error"
+      ? status?.lastError || "El último envío no pudo completarse."
+      : health === "ok"
+        ? `Último envío confirmado: ${status?.lastSentAt || "sin registro"}.`
+        : "Revisando el último resultado registrado por Gmail.";
+
+  return (
+    <section className={`email-health-banner email-health-${health}`}>
+      <span className="email-health-icon" aria-hidden="true">
+        {health === "error" ? "!" : health === "ok" ? "✓" : "…"}
+      </span>
+      <div>
+        <small>Canal de notificaciones</small>
+        <strong>{title}</strong>
+        <p>{detail}</p>
+      </div>
+      <button type="button" onClick={() => navigate("users")}>
+        Revisar correo <span>→</span>
+      </button>
+    </section>
+  );
+}
+
 function MetricCard({
   label,
   value,
@@ -2512,12 +2708,20 @@ function IncidentRow({
   const actor = resolved
     ? resolution?.author ?? incident.enteredBy
     : incident.enteredBy;
+  const type = incidentType(incident);
   return (
-    <button className="incident-row" type="button" onClick={onClick}>
+    <button
+      className={`incident-row incident-type-${type}`}
+      type="button"
+      onClick={onClick}
+    >
       <span className={statusClass(incident.status)} />
       <span className="incident-main">
-        <span className="incident-code">
-          {incident.code}
+        <span className="incident-identity-line">
+          <span className={`incident-type-badge badge-${type}`}>
+            {incidentTypeData[type].shortLabel}
+          </span>
+          <span className="incident-code">{incident.code}</span>
         </span>
         <strong>{incident.system}</strong>
         <small>{incident.category}</small>
@@ -2550,6 +2754,9 @@ function IncidentsView({
   statusFilter,
   setStatusFilter,
   stageCounts,
+  typeFilter,
+  setTypeFilter,
+  typeCounts,
   openWizard,
   openIncident,
 }: {
@@ -2562,6 +2769,9 @@ function IncidentsView({
   statusFilter: IncidentViewFilter;
   setStatusFilter: (value: IncidentViewFilter) => void;
   stageCounts: Record<IncidentViewFilter, number>;
+  typeFilter: IncidentTypeFilter;
+  setTypeFilter: (value: IncidentTypeFilter) => void;
+  typeCounts: Record<IncidentTypeFilter, number>;
   openWizard: () => void;
   openIncident: (incident: Incident) => void;
 }) {
@@ -2603,6 +2813,45 @@ function IncidentsView({
           </select>
         </label>
       </section>
+      <section className="incident-type-tabs" aria-label="Tipos de incidentes">
+        {(
+          [
+            ["all", "Todos", "Vista consolidada", "≡"],
+            [
+              "operational",
+              "Emergencias operacionales",
+              incidentTypeData.operational.description,
+              incidentTypeData.operational.icon,
+            ],
+            [
+              "financial",
+              "Crisis financieras",
+              incidentTypeData.financial.description,
+              incidentTypeData.financial.icon,
+            ],
+            [
+              "community",
+              "Crisis comunitarias",
+              incidentTypeData.community.description,
+              incidentTypeData.community.icon,
+            ],
+          ] as Array<[IncidentTypeFilter, string, string, string]>
+        ).map(([type, label, description, icon]) => (
+          <button
+            key={type}
+            type="button"
+            className={`${typeFilter === type ? "active" : ""} type-${type}`}
+            onClick={() => setTypeFilter(type)}
+          >
+            <span aria-hidden="true">{icon}</span>
+            <div>
+              <strong>{label}</strong>
+              <small>{description}</small>
+            </div>
+            <b>{typeCounts[type]}</b>
+          </button>
+        ))}
+      </section>
       <section className="incident-stage-tabs" aria-label="Etapas de los reportes">
         {(
           [
@@ -2637,6 +2886,11 @@ function IncidentsView({
                   ? "reportes iniciados"
                   : "reportes en gestión"}
             </h2>
+            <small className="result-type-label">
+              {typeFilter === "all"
+                ? "Todas las categorías"
+                : incidentTypeData[typeFilter].label}
+            </small>
           </div>
         </div>
         <div className="incident-list">
@@ -3774,6 +4028,7 @@ function UsersView({ currentUser }: { currentUser: AuthenticatedUser }) {
       sender: NOTIFICATION_SENDER,
       recipient: NOTIFICATION_RECIPIENT,
       missingConfiguration: 3,
+      health: "unknown",
     });
   const [checkingEmail, setCheckingEmail] = useState(true);
   const [sendingTest, setSendingTest] = useState(false);
@@ -3998,6 +4253,16 @@ function UsersView({ currentUser }: { currentUser: AuthenticatedUser }) {
       system: "Gestión de Emergencias SSR",
       actor: "Marcelo Andrés Ulloa Solís",
     });
+    const refreshedStatus = await apiFetch("/api/email/status", {
+      cache: "no-store",
+    })
+      .then((response) =>
+        response.ok
+          ? (response.json() as Promise<EmailConnectionStatus>)
+          : null,
+      )
+      .catch(() => null);
+    if (refreshedStatus) setEmailConnection(refreshedStatus);
     setSendingTest(false);
     setMessage(
       notification.status === "Enviado"
@@ -4270,12 +4535,18 @@ function UsersView({ currentUser }: { currentUser: AuthenticatedUser }) {
             </div>
             <span
               className={`provider-status ${
-                emailConnection.configured ? "connected" : "pending"
+                emailConnection.health === "error"
+                  ? "error"
+                  : emailConnection.configured
+                    ? "connected"
+                    : "pending"
               }`}
             >
               {checkingEmail
                 ? "Comprobando"
-                : emailConnection.configured
+                : emailConnection.health === "error"
+                  ? "Requiere atención"
+                  : emailConnection.configured
                   ? "Gmail conectado"
                   : "Autorización pendiente"}
             </span>
@@ -4289,7 +4560,33 @@ function UsersView({ currentUser }: { currentUser: AuthenticatedUser }) {
             <a href={`mailto:${emailConnection.recipient}`}>
               {emailConnection.recipient}
             </a>
-            <p>Eventos: nueva falla y falla resuelta.</p>
+            <p>
+              Eventos: nueva falla, falla resuelta y resumen diario de las
+              08:00.
+            </p>
+            {!checkingEmail && emailConnection.health === "error" && (
+              <div className="email-diagnostic error">
+                <strong>Último envío rechazado</strong>
+                <p>
+                  {emailConnection.lastError ||
+                    "Gmail no pudo completar la última entrega."}
+                </p>
+                <small>
+                  Último intento: {emailConnection.lastAttemptAt || "sin registro"}
+                  {emailConnection.lastSentAt
+                    ? ` · Último envío correcto: ${emailConnection.lastSentAt}`
+                    : ""}
+                </small>
+              </div>
+            )}
+            {!checkingEmail && emailConnection.health === "ok" && (
+              <div className="email-diagnostic success">
+                <strong>Canal verificado</strong>
+                <small>
+                  Último envío correcto: {emailConnection.lastSentAt || "sin registro"}
+                </small>
+              </div>
+            )}
             {!checkingEmail && !emailConnection.configured && (
               <p className="connection-note">
                 La programación está lista. Falta autorizar esta cuenta en

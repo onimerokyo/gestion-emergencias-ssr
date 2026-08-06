@@ -104,6 +104,14 @@ type RawComment = {
   systems: { official_code: string } | Array<{ official_code: string }>;
 };
 
+type RawNotificationLog = {
+  event_type: string;
+  status: "sent" | "error";
+  error_message?: string | null;
+  created_at: string;
+  sent_at?: string | null;
+};
+
 const INCIDENT_SELECT = [
   "id,code,category,priority,description,affected_connections,affected_at_report",
   "water_status,electrical_status,status,workflow_status,assigned_to_name",
@@ -201,13 +209,73 @@ export async function apiFetch(
       return handleUsers(method, init);
     }
     if (path.endsWith("/api/email/status") && method === "GET") {
-      await requireUser();
+      const user = await requireUser();
+      if (user.role !== "admin") {
+        return json({ error: "No autorizado." }, 403);
+      }
+      const [{ data: settings, error: settingsError }, { data, error }] =
+        await Promise.all([
+          supabase
+            .from("app_settings")
+            .select("notification_to,sender_email")
+            .eq("id", 1)
+            .limit(1)
+            .maybeSingle(),
+          supabase
+            .from("notification_log")
+            .select("event_type,status,error_message,created_at,sent_at")
+            .order("created_at", { ascending: false })
+            .limit(50),
+        ]);
+      if (settingsError) throw settingsError;
+      if (error) throw error;
+      const deliveries = (data ?? []) as RawNotificationLog[];
+      const latest = deliveries[0] ?? null;
+      const latestSent = deliveries.find((item) => item.status === "sent") ?? null;
+      const latestError = deliveries.find((item) => item.status === "error") ?? null;
+      const latestDaily = deliveries.find(
+        (item) => item.event_type === "daily_digest",
+      ) ?? null;
+      const sentTime = latestSent
+        ? new Date(latestSent.sent_at || latestSent.created_at).getTime()
+        : 0;
+      const errorTime = latestError
+        ? new Date(latestError.created_at).getTime()
+        : 0;
+      const dailyErrorTime =
+        latestDaily?.status === "error"
+          ? new Date(latestDaily.created_at).getTime()
+          : 0;
+      const unresolvedDailyError = dailyErrorTime > sentTime;
+      const sender = text(settings?.sender_email) || EMAIL_SENDER;
+      const recipient = text(settings?.notification_to) || EMAIL_RECIPIENT;
+      const configured = isEmail(sender) && isEmail(recipient);
       return json({
-        configured: true,
+        configured,
         provider: "Gmail API",
-        sender: EMAIL_SENDER,
-        recipient: EMAIL_RECIPIENT,
-        missingConfiguration: 0,
+        sender,
+        recipient,
+        missingConfiguration: configured ? 0 : 1,
+        health:
+          Math.max(errorTime, dailyErrorTime) > sentTime
+            ? "error"
+            : sentTime
+              ? "ok"
+              : "unknown",
+        lastStatus: latest?.status ?? null,
+        lastAttemptAt: latest ? formatChile(latest.created_at) : null,
+        lastSentAt: latestSent
+          ? formatChile(latestSent.sent_at || latestSent.created_at)
+          : null,
+        lastError: normalizeEmailError(
+          unresolvedDailyError
+            ? latestDaily?.error_message
+            : latestError?.error_message,
+        ),
+        dailyStatus: latestDaily?.status ?? null,
+        dailyLastAttemptAt: latestDaily
+          ? formatChile(latestDaily.created_at)
+          : null,
       });
     }
     if (path.endsWith("/api/email/send") && method === "POST") {
@@ -566,18 +634,28 @@ async function callEdgeFunction(
   name: string,
   body: Record<string, unknown>,
 ): Promise<Record<string, any>> {
+  const invoke = (accessToken: string) =>
+    fetch(`${SUPABASE_URL}/functions/v1/${name}`, {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_PUBLISHABLE_KEY,
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
   const { data } = await supabase.auth.getSession();
-  const accessToken = data.session?.access_token;
+  let accessToken = data.session?.access_token;
   if (!accessToken) throw new Error("No autorizado. Inicia sesión nuevamente.");
-  const response = await fetch(`${SUPABASE_URL}/functions/v1/${name}`, {
-    method: "POST",
-    headers: {
-      apikey: SUPABASE_PUBLISHABLE_KEY,
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
+  let response = await invoke(accessToken);
+  if (response.status === 401) {
+    const { data: refreshed, error } = await supabase.auth.refreshSession();
+    accessToken = refreshed.session?.access_token;
+    if (error || !accessToken) {
+      throw new Error("La sesión expiró. Inicia sesión nuevamente.");
+    }
+    response = await invoke(accessToken);
+  }
   const result = (await response.json().catch(() => ({}))) as Record<string, any>;
   if (!response.ok) {
     throw new Error(result.error || "No fue posible completar la operación.");
@@ -772,6 +850,19 @@ function isWorkflowStatus(value: string) {
 
 function isRole(value: unknown): value is AppRole {
   return value === "admin" || value === "reporter" || value === "viewer";
+}
+
+function isEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function normalizeEmailError(value: unknown) {
+  const message = text(value);
+  if (!message) return null;
+  if (/configuración automática incompleta/i.test(message)) {
+    return "La autorización de Gmail venció o fue revocada. Es necesario volver a conectar emergenciasdoh@gmail.com.";
+  }
+  return message;
 }
 
 function text(value: unknown) {
